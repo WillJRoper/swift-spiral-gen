@@ -164,18 +164,17 @@ def compute_internal_energy(T: float) -> float:
     Returns:
         Specific internal energy (erg/g) in code units.
     """
-    import unyt
 
     # u = k_B * T / ((gamma - 1) * mu * m_p)
     gamma = 5.0 / 3.0
     mu = 0.6
-    
+
     T_unyt = T * unyt.K
     u = unyt.kb * T_unyt / ((gamma - 1) * mu * unyt.mp)
-    
+
     # Convert to code units: (km/s)^2
     # 1 erg/g = 1e-10 (km/s)^2
-    u_code = u.to((unyt.km / unyt.s)**2).value
+    u_code = u.to((unyt.km / unyt.s) ** 2).value
 
     return u_code
 
@@ -198,7 +197,6 @@ def _smoothing_length_swiftsimio(pos: np.ndarray, box_size: float, n_ngb: int) -
     from swiftsimio.visualisation.smoothing_length.generate import (
         generate_smoothing_lengths as swift_sl,
     )
-    import unyt
 
     coords = unyt.unyt_array(pos, units="kpc")
     box = unyt.unyt_array([box_size, box_size, box_size], units="kpc")
