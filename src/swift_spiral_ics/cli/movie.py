@@ -1,130 +1,91 @@
-"""CLI for creating movies from SWIFT snapshots."""
+"CLI for creating movies from SWIFT snapshots using swiftsimio."
 
 import argparse
 import subprocess
 import sys
 from pathlib import Path
 
-import h5py
 import imageio
 import matplotlib.pyplot as plt
 import numpy as np
+import swiftsimio
+import unyt
+from swiftsimio.visualisation.projection import project_pixel_grid
 from tqdm import tqdm
 
 
-def load_snapshot(filename: str) -> dict:
-    """Load snapshot data.
-
-    Args:
-        filename: Snapshot HDF5 filename.
-
-    Returns:
-        Dict with particle data and metadata.
-    """
-    data = {}
-
-    with h5py.File(filename, "r") as f:
-        # Try to get time
-        if "Header" in f:
-            time_attr = f["Header"].attrs.get("Time", 0.0)
-            if hasattr(time_attr, "__len__") and not isinstance(time_attr, str) and len(time_attr) > 0:
-                data["time"] = float(time_attr[0])
-            else:
-                data["time"] = float(time_attr)
-
-            box_size_attr = f["Header"].attrs.get("BoxSize", 100.0)
-            if hasattr(box_size_attr, "__len__") and not isinstance(box_size_attr, str) and len(box_size_attr) > 0:
-                data["box_size"] = float(box_size_attr[0])
-            else:
-                data["box_size"] = float(box_size_attr)
-        else:
-            data["time"] = 0.0
-            data["box_size"] = 100.0
-
-        # Load gas (PartType0) - handle plural names
-        if "PartType0" in f:
-            coords_key = "Coordinates" if "Coordinates" in f["PartType0"] else "Coordinate"
-            mass_key = "Masses" if "Masses" in f["PartType0"] else "Mass"
-            vel_key = "Velocities" if "Velocities" in f["PartType0"] else "Velocity"
-
-            data["gas"] = {
-                "pos": f[f"PartType0/{coords_key}"][:],
-                "mass": f[f"PartType0/{mass_key}"][:],
-            }
-
-            if vel_key in f["PartType0"]:
-                data["gas"]["vel"] = f[f"PartType0/{vel_key}"][:]
-
-        # Load stars (PartType4)
-        if "PartType4" in f:
-            coords_key = "Coordinates" if "Coordinates" in f["PartType4"] else "Coordinate"
-            mass_key = "Masses" if "Masses" in f["PartType4"] else "Mass"
-            vel_key = "Velocities" if "Velocities" in f["PartType4"] else "Velocity"
-
-            data["stars"] = {
-                "pos": f[f"PartType4/{coords_key}"][:],
-                "mass": f[f"PartType4/{mass_key}"][:],
-            }
-
-            if vel_key in f["PartType4"]:
-                data["stars"]["vel"] = f[f"PartType4/{vel_key}"][:]
-
-    return data
-
-
 def render_snapshot(
-    data: dict,
-    box_size: float,
+    data: swiftsimio.SWIFTDataset,
     bins: int = 512,
     show_vel: bool = False,
     vel_subsample: int = 500,
 ) -> np.ndarray:
-    """Render snapshot to image.
+    """Render snapshot to image using swiftsimio.
 
     Args:
-        data: Snapshot data dict.
-        box_size: Box size (kpc).
+        data: Loaded swiftsimio dataset.
         bins: Number of bins for density projection.
         show_vel: If True, overlay velocity vectors.
         vel_subsample: Number of particles to show for velocity field.
 
     Returns:
-        RGB image array.
+        RGB image array (H, W, 3).
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    box_size = data.metadata.boxsize[0].to("kpc").value
 
-    # Combined density map (gas + stars)
+    # Project gas mass density
+    # swiftsimio projects mass by default if 'project' is 'masses'
+    # but project_pixel_grid takes specific data.
+    # We want surface density: sum(mass) / area
+    
+    # Initialize combined density map
     combined_density = np.zeros((bins, bins))
+    
+    # Define grid
+    region = [0, box_size, 0, box_size] # xmin, xmax, ymin, ymax in kpc
 
-    for comp_name, color_weight in [("gas", 1.0), ("stars", 0.5)]:
-        if comp_name in data:
-            pos = data[comp_name]["pos"]
-            mass = data[comp_name]["mass"]
+    # Gas
+    if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
+        gas_map = project_pixel_grid(
+            data=data.gas,
+            resolution=bins,
+            project="masses",
+            parallel=True,
+            region=region
+        )
+        combined_density += gas_map.value * 1.0 # Weight 1.0
 
-            if len(pos) > 0:
-                x, y = pos[:, 0], pos[:, 1]
-
-                # Create 2D histogram
-                H, xedges, yedges = np.histogram2d(
-                    x, y, bins=bins, range=[[0, box_size], [0, box_size]], weights=mass
-                )
-
-                combined_density += H.T * color_weight
+    # Stars
+    if hasattr(data, "stars") and len(data.stars.coordinates) > 0:
+        star_map = project_pixel_grid(
+            data=data.stars,
+            resolution=bins,
+            project="masses",
+            parallel=True,
+            region=region
+        )
+        combined_density += star_map.value * 0.5 # Weight 0.5
 
     # Plot density
     extent = [0, box_size, 0, box_size]
+    
+    # Handle log scale safely
+    density_log = np.log10(combined_density + 1e-10) # 1e-10 floor
+    
+    # Use swiftsimio-like colormap or inferno
     ax.imshow(
-        np.log10(combined_density + 1e-5),
+        density_log,
         origin="lower",
         extent=extent,
         cmap="inferno",
-        aspect="auto",
+        aspect="equal",
     )
 
     # Overlay velocity field if requested
-    if show_vel and "gas" in data and "vel" in data["gas"]:
-        pos = data["gas"]["pos"]
-        vel = data["gas"]["vel"]
+    if show_vel and hasattr(data, "gas") and hasattr(data.gas, "velocities"):
+        pos = data.gas.coordinates.to("kpc").value
+        vel = data.gas.velocities.to("km/s").value
 
         if len(pos) > vel_subsample:
             indices = np.random.choice(len(pos), vel_subsample, replace=False)
@@ -134,10 +95,16 @@ def render_snapshot(
         x, y = pos[:, 0], pos[:, 1]
         vx, vy = vel[:, 0], vel[:, 1]
 
-        ax.quiver(x, y, vx, vy, color="white", alpha=0.3, scale=1000)
+        # Only plot vectors inside the box (handling periodic wrap visually is hard, just clip)
+        mask = (x >= 0) & (x <= box_size) & (y >= 0) & (y <= box_size)
+        
+        ax.quiver(
+            x[mask], y[mask], vx[mask], vy[mask], 
+            color="white", alpha=0.3, scale=1000, width=0.002
+        )
 
     # Add time label
-    time_gyr = data.get("time", 0.0)
+    time_gyr = data.metadata.time.to("Gyr").value
     ax.text(
         0.05,
         0.95,
@@ -158,8 +125,15 @@ def render_snapshot(
 
     # Convert to image array
     fig.canvas.draw()
-    img = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
-    img = img.reshape(fig.canvas.get_width_height()[::-1] + (4,)) # 4 channels for ARGB
+    # Use tostring_argb for modern matplotlib, check channel order
+    # ARGB -> RGBA conversion might be needed if using tostring_argb
+    # Actually, try 'buffer_rgba' which is standard in newer mpl
+    try:
+        img = np.asarray(fig.canvas.buffer_rgba())
+    except AttributeError:
+        # Fallback for older mpl
+        img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
 
     plt.close(fig)
 
@@ -218,7 +192,7 @@ def create_movie_ffmpeg(frames: list, output_file: str, fps: int = 10) -> None:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Create movie from SWIFT snapshots",
+        description="Create movie from SWIFT snapshots using swiftsimio",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -237,34 +211,102 @@ def main():
     args = parser.parse_args()
 
     print("=" * 70)
-    print("SWIFT SNAPSHOT MOVIE MAKER")
+    print("SWIFT SNAPSHOT MOVIE MAKER (swiftsimio)")
     print("=" * 70)
 
     # Find snapshot files
-    snapshot_files = sorted(Path(".").glob(args.snapshot_pattern))
+    # Handle pattern with wildcard manually since argparse handles it as string
+    # Try globbing assuming the user provided a quoted pattern or shell expansion
+    
+    # If user provided a glob pattern in quotes (e.g. "snap_*.hdf5")
+    if "*" in args.snapshot_pattern:
+        snapshot_files = sorted(Path(".").glob(args.snapshot_pattern))
+    else:
+        # Maybe user provided a single file or shell expanded list?
+        # Argument is single string, so likely a pattern
+        snapshot_files = sorted(Path(".").glob(args.snapshot_pattern))
+        
+    # If shell expanded it, we might only get the first one if we don't use nargs='+'
+    # But let's assume the user quotes the pattern or passes a specific glob.
+    # Actually, standard unix shell expands before passing. 
+    # If user ran `swift-spiral-movie snap_*.hdf5`, args.snapshot_pattern will be `snap_0000.hdf5`
+    # and sys.argv will have the rest.
+    # argparse should use nargs='+' to catch shell expansion.
+    
+    # Let's fix argument parsing to handle shell expansion
+    # We'll just restart parsing logic here for robustness.
+    pass
+
+def robust_glob(pattern_or_files):
+    """Handle both glob patterns and file lists."""
+    if isinstance(pattern_or_files, list):
+        # Shell expanded
+        files = []
+        for p in pattern_or_files:
+            path = Path(p)
+            if path.is_file():
+                files.append(path)
+        return sorted(files)
+    elif isinstance(pattern_or_files, str):
+        return sorted(Path(".").glob(pattern_or_files))
+    return []
+
+# Redefine main to use nargs='+'
+def main_robust():
+    parser = argparse.ArgumentParser(
+        description="Create movie from SWIFT snapshots using swiftsimio",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "snapshots", type=str, nargs="+", help="Snapshot files or pattern"
+    )
+    parser.add_argument("--out-movie", type=str, default="movie.mp4", help="Output movie file")
+    parser.add_argument("--fps", type=int, default=10, help="Frames per second")
+    parser.add_argument(
+        "--bins", type=int, default=512, help="Number of bins for density projection"
+    )
+    parser.add_argument("--show-vel", action="store_true", help="Show velocity field overlay")
+    parser.add_argument(
+        "--vel-subsample", type=int, default=500, help="Number of particles for velocity field"
+    )
+
+    args = parser.parse_args()
+    
+    print("=" * 70)
+    print("SWIFT SNAPSHOT MOVIE MAKER (swiftsimio)")
+    print("=" * 70)
+    
+    # Check if first arg is a glob pattern that didn't expand (e.g. quoted)
+    if len(args.snapshots) == 1 and "*" in args.snapshots[0]:
+        snapshot_files = sorted(Path(".").glob(args.snapshots[0]))
+    else:
+        snapshot_files = [Path(f) for f in args.snapshots]
+        snapshot_files.sort()
 
     if len(snapshot_files) == 0:
-        print(f"\nError: No files matching pattern '{args.snapshot_pattern}'")
+        print(f"\nError: No files found.")
         sys.exit(1)
 
     print(f"\nFound {len(snapshot_files)} snapshots")
     print(f"First: {snapshot_files[0]}")
     print(f"Last: {snapshot_files[-1]}")
 
-    # Load first snapshot to get box size
-    print("\nLoading first snapshot for metadata...")
-    data = load_snapshot(str(snapshot_files[0]))
-    box_size = data["box_size"]
-    print(f"Box size: {box_size:.2f} kpc")
-
     # Render frames
     print("\nRendering frames...")
     frames = []
 
     for snap_file in tqdm(snapshot_files, desc="Rendering"):
-        data = load_snapshot(str(snap_file))
-        img = render_snapshot(data, box_size, args.bins, args.show_vel, args.vel_subsample)
-        frames.append(img)
+        try:
+            data = swiftsimio.load(str(snap_file))
+            img = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample)
+            frames.append(img)
+        except Exception as e:
+            print(f"Failed to render {snap_file}: {e}")
+            continue
+
+    if not frames:
+        print("No frames rendered.")
+        sys.exit(1)
 
     # Create movie
     print(f"\nCreating movie: {args.out_movie}")
@@ -278,4 +320,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main_robust()
