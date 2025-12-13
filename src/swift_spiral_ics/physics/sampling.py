@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy import optimize
+from scipy.special import lambertw
 
 
 def sample_nfw_halo(
@@ -114,20 +115,15 @@ def sample_exponential_disc(
     Returns:
         Tuple of (x, y, z) positions (kpc).
     """
-    # Sample cylindrical R using exponential profile inverse CDF
-    # For exponential: CDF = 1 - (1 + R/R_d) * exp(-R/R_d)
-    # Inverse: solve numerically or use approximation
+    def _sample_R(u_vals: np.ndarray) -> np.ndarray:
+        """Inverse CDF for exponential disc surface density using lambert W."""
+        u_clipped = np.clip(u_vals, 1e-12, 1 - 1e-12)
+        w = lambertw((u_clipped - 1.0) / np.e).real
+        return -R_d * (1.0 + w)
 
+    # Sample cylindrical R using analytic inverse CDF
     u = rng.uniform(0, 1, N)
-
-    # Approximate inverse CDF for exponential disc
-    # More accurate method would use root-finding, but this is faster
-    R = np.zeros(N)
-    for i in range(N):
-        u_i = u[i]
-        R[i] = optimize.brentq(
-            lambda r, u_val=u_i: 1 - (1 + r / R_d) * np.exp(-r / R_d) - u_val, 0.01, 20 * R_d
-        )
+    R = _sample_R(u)
 
     # Sample phi uniformly (will be modified by spiral arms if present)
     phi = rng.uniform(0, 2 * np.pi, N)
@@ -156,14 +152,7 @@ def sample_exponential_disc(
                     break
                 # Resample R, phi for rejects
                 u_new = rng.uniform(0, 1, idx_reject.size)
-                R[idx_reject] = [
-                    optimize.brentq(
-                        lambda r, u_val=u_val: 1 - (1 + r / R_d) * np.exp(-r / R_d) - u_val,
-                        0.01,
-                        20 * R_d,
-                    )
-                    for u_val in u_new
-                ]
+                R[idx_reject] = _sample_R(u_new)
                 phi[idx_reject] = rng.uniform(0, 2 * np.pi, idx_reject.size)
 
     # Apply bar density modulation if requested
