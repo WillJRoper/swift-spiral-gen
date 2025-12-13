@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 
 import imageio
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import swiftsimio
@@ -189,54 +191,6 @@ def create_movie_ffmpeg(frames: list, output_file: str, fps: int = 10) -> None:
     temp_dir.rmdir()
 
 
-def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Create movie from SWIFT snapshots using swiftsimio",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "snapshot_pattern", type=str, help="Snapshot file pattern (e.g., 'snapshot_*.hdf5')"
-    )
-    parser.add_argument("--out-movie", type=str, default="movie.mp4", help="Output movie file")
-    parser.add_argument("--fps", type=int, default=10, help="Frames per second")
-    parser.add_argument(
-        "--bins", type=int, default=512, help="Number of bins for density projection"
-    )
-    parser.add_argument("--show-vel", action="store_true", help="Show velocity field overlay")
-    parser.add_argument(
-        "--vel-subsample", type=int, default=500, help="Number of particles for velocity field"
-    )
-
-    args = parser.parse_args()
-
-    print("=" * 70)
-    print("SWIFT SNAPSHOT MOVIE MAKER (swiftsimio)")
-    print("=" * 70)
-
-    # Find snapshot files
-    # Handle pattern with wildcard manually since argparse handles it as string
-    # Try globbing assuming the user provided a quoted pattern or shell expansion
-    
-    # If user provided a glob pattern in quotes (e.g. "snap_*.hdf5")
-    if "*" in args.snapshot_pattern:
-        snapshot_files = sorted(Path(".").glob(args.snapshot_pattern))
-    else:
-        # Maybe user provided a single file or shell expanded list?
-        # Argument is single string, so likely a pattern
-        snapshot_files = sorted(Path(".").glob(args.snapshot_pattern))
-        
-    # If shell expanded it, we might only get the first one if we don't use nargs='+'
-    # But let's assume the user quotes the pattern or passes a specific glob.
-    # Actually, standard unix shell expands before passing. 
-    # If user ran `swift-spiral-movie snap_*.hdf5`, args.snapshot_pattern will be `snap_0000.hdf5`
-    # and sys.argv will have the rest.
-    # argparse should use nargs='+' to catch shell expansion.
-    
-    # Let's fix argument parsing to handle shell expansion
-    # We'll just restart parsing logic here for robustness.
-    pass
-
 def robust_glob(pattern_or_files):
     """Handle both glob patterns and file lists."""
     if isinstance(pattern_or_files, list):
@@ -251,8 +205,8 @@ def robust_glob(pattern_or_files):
         return sorted(Path(".").glob(pattern_or_files))
     return []
 
-# Redefine main to use nargs='+'
-def main_robust():
+
+def main():
     parser = argparse.ArgumentParser(
         description="Create movie from SWIFT snapshots using swiftsimio",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -320,4 +274,4 @@ def main_robust():
 
 
 if __name__ == "__main__":
-    main_robust()
+    main()
