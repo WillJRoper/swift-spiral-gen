@@ -250,13 +250,9 @@ def main():
     frames = []
 
     for snap_file in tqdm(snapshot_files, desc="Rendering"):
-        try:
-            data = swiftsimio.load(str(snap_file))
-            img = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample)
-            frames.append(img)
-        except Exception as e:
-            print(f"Failed to render {snap_file}: {e}")
-            continue
+        data = swiftsimio.load(str(snap_file))
+        img = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample)
+        frames.append(img)
 
     if not frames:
         print("No frames rendered.")
