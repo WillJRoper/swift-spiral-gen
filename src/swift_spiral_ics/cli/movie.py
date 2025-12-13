@@ -26,8 +26,17 @@ def load_snapshot(filename: str) -> dict:
     with h5py.File(filename, "r") as f:
         # Try to get time
         if "Header" in f:
-            data["time"] = f["Header"].attrs.get("Time", 0.0)
-            data["box_size"] = f["Header"].attrs.get("BoxSize", 100.0)
+            time_attr = f["Header"].attrs.get("Time", 0.0)
+            if hasattr(time_attr, "__len__") and not isinstance(time_attr, str) and len(time_attr) > 0:
+                data["time"] = float(time_attr[0])
+            else:
+                data["time"] = float(time_attr)
+
+            box_size_attr = f["Header"].attrs.get("BoxSize", 100.0)
+            if hasattr(box_size_attr, "__len__") and not isinstance(box_size_attr, str) and len(box_size_attr) > 0:
+                data["box_size"] = float(box_size_attr[0])
+            else:
+                data["box_size"] = float(box_size_attr)
         else:
             data["time"] = 0.0
             data["box_size"] = 100.0
