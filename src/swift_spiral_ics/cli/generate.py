@@ -6,7 +6,12 @@ import sys
 import numpy as np
 
 from ..io.swift_writer import print_ic_summary, write_swift_ic
-from ..io.yaml_writer import generate_swift_params, print_yaml_summary, write_yaml_file
+from ..io.yaml_writer import (
+    available_param_templates,
+    generate_swift_params,
+    print_yaml_summary,
+    write_yaml_file,
+)
 from ..physics.orbits import (
     center_of_mass_correction,
     parabolic_orbit_initial_conditions,
@@ -44,6 +49,22 @@ def parse_args():
     parser.add_argument("--time-end-gyr", type=float, default=2.0, help="Simulation end time (Gyr)")
     parser.add_argument(
         "--snapshot-dt-myr", type=float, default=10.0, help="Snapshot spacing (Myr)"
+    )
+    parser.add_argument(
+        "--snapshot-basename", type=str, default="snapshot", help="Snapshot basename for YAML output"
+    )
+    parser.add_argument(
+        "--param-template",
+        type=str,
+        default="eagle_isolated",
+        choices=available_param_templates(),
+        help="Packaged SWIFT parameter template to start from",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Optional MetaData run_name override for the parameter file",
     )
 
     # Per-galaxy halo parameters
@@ -618,7 +639,13 @@ def main():
     # Write YAML parameter file
     print(f"Writing YAML parameter file: {args.out_params}")
     params = generate_swift_params(
-        args.out_ics, args.box_kpc, args.time_end_gyr, args.snapshot_dt_myr
+        ic_filename=args.out_ics,
+        box_size=args.box_kpc,
+        time_end_gyr=args.time_end_gyr,
+        snapshot_dt_myr=args.snapshot_dt_myr,
+        output_basename=args.snapshot_basename,
+        run_name=args.run_name,
+        param_template=args.param_template,
     )
     write_yaml_file(args.out_params, params)
     print_yaml_summary(args.out_params, args.time_end_gyr, args.snapshot_dt_myr)

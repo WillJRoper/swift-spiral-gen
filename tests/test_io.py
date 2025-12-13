@@ -194,6 +194,7 @@ class TestYamlWriter:
             box_size=100.0,
             time_end_gyr=2.0,
             snapshot_dt_myr=10.0,
+            output_basename="snap",
         )
 
         assert isinstance(params, dict)
@@ -202,6 +203,23 @@ class TestYamlWriter:
         assert "Gravity" in params
         assert "SPH" in params
         assert "InitialConditions" in params
+        assert params["InitialConditions"]["file_name"] == "test.hdf5"
+        assert params["Snapshots"]["basename"] == "snap"
+
+    def test_generate_swift_params_run_name_override(self):
+        """Run name and template overrides are applied."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=50.0,
+            time_end_gyr=1.0,
+            snapshot_dt_myr=5.0,
+            run_name="custom-run",
+            param_template="eagle_isolated",
+        )
+
+        assert params["MetaData"]["run_name"] == "custom-run"
+        assert params["Snapshots"]["delta_time"] == 0.005
+        assert params["Statistics"]["delta_time"] == 0.005
 
     def test_write_yaml_file(self):
         """Test YAML file writing."""
