@@ -136,21 +136,35 @@ def sample_exponential_disc(
     if spiral_params is not None:
         from .perturbations import spiral_density_modulation
 
-        # Rejection sampling for spiral arms
         arm_strength = spiral_params.get("arm_strength", 0.0)
         n_arms = spiral_params.get("n_arms", 2)
         pitch_deg = spiral_params.get("pitch_deg", 15.0)
 
         if arm_strength > 0:
-            modulation = spiral_density_modulation(R, phi, arm_strength, n_arms, pitch_deg)
-            accept_prob = modulation / (1 + arm_strength)  # Normalize
-            keep = rng.uniform(0, 1, N) < accept_prob
-
-            # Resample rejected particles
-            n_reject = N - np.sum(keep)
-            if n_reject > 0:
-                # Simple approach: accept what we have (slight bias but acceptable)
-                pass
+            # Rejection sample until all are accepted (cap iterations for speed)
+            max_iters = 5
+            keep = np.zeros(N, dtype=bool)
+            for _ in range(max_iters):
+                modulation = spiral_density_modulation(R[~keep], phi[~keep], arm_strength, n_arms, pitch_deg)
+                accept_prob = modulation / (1 + arm_strength)
+                draw = rng.uniform(0, 1, np.count_nonzero(~keep))
+                newly_kept = draw < accept_prob
+                # Update keep mask and resample rejected
+                idx_reject = np.where(~keep)[0][~newly_kept]
+                keep[~keep] = newly_kept
+                if not idx_reject.size:
+                    break
+                # Resample R, phi for rejects
+                u_new = rng.uniform(0, 1, idx_reject.size)
+                R[idx_reject] = [
+                    optimize.brentq(
+                        lambda r, u_val=u_val: 1 - (1 + r / R_d) * np.exp(-r / R_d) - u_val,
+                        0.01,
+                        20 * R_d,
+                    )
+                    for u_val in u_new
+                ]
+                phi[idx_reject] = rng.uniform(0, 2 * np.pi, idx_reject.size)
 
     # Apply bar density modulation if requested
     if bar_params is not None and bar_params.get("enabled", False):
