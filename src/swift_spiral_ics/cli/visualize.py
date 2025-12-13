@@ -7,6 +7,7 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.colors import LogNorm
 
 
 def load_ic_data(filename: str) -> dict:
@@ -51,46 +52,47 @@ def load_ic_data(filename: str) -> dict:
     return data
 
 
-def plot_surface_density(ax, pos, mass, box_size, title, bins=200):
-    """Plot surface density projection.
-
-    Args:
-        ax: Matplotlib axis.
-        pos: Particle positions (N, 3).
-        mass: Particle masses (N).
-        box_size: Box size.
-        title: Plot title.
-        bins: Number of bins.
-    """
+def plot_projected_density(
+    ax, pos, mass, box_size, title, plane="xy", bins=300, eps=1e-12
+):
+    """Plot projected surface density with log scaling for a given plane."""
     if len(pos) == 0:
         ax.text(0.5, 0.5, "No particles", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(title)
         return
 
-    x, y = pos[:, 0], pos[:, 1]
+    center = box_size / 2.0
+    shifted = pos - center
+    if plane == "xy":
+        x, y = shifted[:, 0], shifted[:, 1]
+        xlabel, ylabel = "x (kpc)", "y (kpc)"
+    elif plane == "xz":
+        x, y = shifted[:, 0], shifted[:, 2]
+        xlabel, ylabel = "x (kpc)", "z (kpc)"
+    elif plane == "yz":
+        x, y = shifted[:, 1], shifted[:, 2]
+        xlabel, ylabel = "y (kpc)", "z (kpc)"
+    else:
+        raise ValueError(f"Unknown plane '{plane}'")
 
-    # Create 2D histogram
-    H, xedges, yedges = np.histogram2d(
-        x, y, bins=bins, range=[[0, box_size], [0, box_size]], weights=mass
-    )
-
-    # Convert to surface density (Msun/kpc^2)
-    pixel_area = (box_size / bins) ** 2
+    hist_range = [[-box_size / 2, box_size / 2], [-box_size / 2, box_size / 2]]
+    H, xedges, yedges = np.histogram2d(x, y, bins=bins, range=hist_range, weights=mass)
+    pixel_area = ((hist_range[0][1] - hist_range[0][0]) / bins) ** 2
     sigma = H.T / pixel_area
 
-    # Plot
-    extent = [0, box_size, 0, box_size]
+    vmax = np.percentile(sigma[sigma > 0], 99) if np.any(sigma > 0) else 1.0
     im = ax.imshow(
-        np.log10(sigma + 1e-10),
+        sigma,
         origin="lower",
-        extent=extent,
-        cmap="viridis",
-        aspect="auto",
+        extent=[*hist_range[0], *hist_range[1]],
+        cmap="magma",
+        norm=LogNorm(vmin=max(eps, sigma[sigma > 0].min()) if np.any(sigma > 0) else eps, vmax=vmax),
+        aspect="equal",
     )
-    ax.set_xlabel("x (kpc)")
-    ax.set_ylabel("y (kpc)")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     ax.set_title(title)
-    plt.colorbar(im, ax=ax, label=r"$\log_{10}(\Sigma / {\rm M_\odot\,kpc^{-2}})$")
+    plt.colorbar(im, ax=ax, label=r"$\Sigma\ {\rm [M_\odot\,kpc^{-2}]}$")
 
 
 def plot_rotation_curve(ax, pos, vel, mass, box_size, title):
@@ -278,32 +280,39 @@ def main():
     print("\nGenerating diagnostic plots...")
 
     with PdfPages(args.out_pdf) as pdf:
-        # Surface density plots
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-        for i, comp_name in enumerate(["dm", "gas", "stars"]):
+        # Projected surface density: face-on (xy) and edge-on (xz, yz)
+        for comp_name in ["dm", "gas", "stars"]:
+            fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
             if comp_name in data:
-                plot_surface_density(
-                    axes[i],
-                    data[comp_name]["pos"],
-                    data[comp_name]["mass"],
-                    box_size,
-                    f"{comp_name.upper()} Surface Density",
-                )
+                for ax, plane, label in zip(
+                    axes,
+                    ["xy", "xz", "yz"],
+                    ["Face-on (XY)", "Edge-on (XZ)", "Edge-on (YZ)"],
+                ):
+                    plot_projected_density(
+                        ax,
+                        data[comp_name]["pos"],
+                        data[comp_name]["mass"],
+                        box_size,
+                        f"{comp_name.upper()} {label}",
+                        plane=plane,
+                    )
             else:
-                axes[i].text(
-                    0.5,
-                    0.5,
-                    f"No {comp_name}",
-                    ha="center",
-                    va="center",
-                    transform=axes[i].transAxes,
-                )
-                axes[i].set_title(f"{comp_name.upper()} Surface Density")
+                for ax in axes:
+                    ax.text(
+                        0.5,
+                        0.5,
+                        f"No {comp_name}",
+                        ha="center",
+                        va="center",
+                        transform=ax.transAxes,
+                    )
+                    ax.set_title(f"{comp_name.upper()}")
 
-        plt.tight_layout()
-        pdf.savefig(fig)
-        plt.savefig(out_dir / "surface_density.png", dpi=150)
-        plt.close()
+            plt.tight_layout()
+            pdf.savefig(fig)
+            plt.savefig(out_dir / f"{comp_name}_projections.png", dpi=150)
+            plt.close()
 
         # Rotation curves
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
