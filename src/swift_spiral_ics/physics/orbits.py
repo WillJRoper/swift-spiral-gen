@@ -1,6 +1,7 @@
 """Orbital dynamics for galaxy mergers."""
 
 import numpy as np
+from .constants import G
 
 
 def parabolic_orbit_initial_conditions(
@@ -26,7 +27,7 @@ def parabolic_orbit_initial_conditions(
     Returns:
         Tuple of (pos, vel) where pos is 3D position (kpc) and vel is 3D velocity (km/s).
     """
-    G = 4.302e-6  # kpc (km/s)^2 / Msun
+    G_val = G.value  # (km/s)^2 kpc / Msun
     M_total = M_primary + M_secondary
 
     # For parabolic orbit, energy E = 0
@@ -34,7 +35,7 @@ def parabolic_orbit_initial_conditions(
     # v_peri = sqrt(2*G*M/r_peri)
 
     # Angular momentum L = r_peri * v_peri = r_peri * sqrt(2*G*M/r_peri) = sqrt(2*G*M*r_peri)
-    L = np.sqrt(2 * G * M_total * r_peri)
+    L = np.sqrt(2 * G_val * M_total * r_peri)
 
     # At initial position r_init, use energy and angular momentum conservation
     # E = 0.5 * v^2 - G*M/r = 0
@@ -42,7 +43,7 @@ def parabolic_orbit_initial_conditions(
     # Also, v = sqrt(v_r^2 + v_t^2), where v_t = L/r
 
     v_t = L / r_init  # Tangential velocity
-    v_total_sq = 2 * G * M_total / r_init
+    v_total_sq = 2 * G_val * M_total / r_init
     v_r_sq = v_total_sq - v_t**2
 
     if v_r_sq < 0:

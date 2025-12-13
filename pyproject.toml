@@ -34,6 +34,10 @@ dependencies = [
     "matplotlib>=3.3",
     "imageio>=2.9",
     "imageio-ffmpeg>=0.4",
+    "unyt>=2.8",
+    "galpy>=1.8",
+    "numba>=0.56",
+    "swiftsimio>=6.0",
 ]
 
 [project.optional-dependencies]

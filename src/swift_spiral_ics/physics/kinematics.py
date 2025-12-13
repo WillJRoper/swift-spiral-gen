@@ -1,30 +1,66 @@
 """Kinematic calculations for galaxy components."""
 
 import numpy as np
+from galpy.potential import epifreq
+from .constants import G
+from .potentials import (
+    get_galpy_potentials,
+    nfw_potential,
+    hernquist_potential,
+    miyamoto_nagai_potential,
+)
+from .profiles import nfw_params
 
 
-def epicyclic_frequency(R: np.ndarray, v_c: np.ndarray) -> np.ndarray:
-    """Calculate epicyclic frequency from rotation curve.
+def epicyclic_frequency(
+    R: np.ndarray,
+    m200: float,
+    c200: float,
+    m_bulge: float,
+    a_bulge: float,
+    M_disc_star: float,
+    R_d_star: float,
+    z_d_star: float,
+    M_disc_gas: float = 0.0,
+    R_d_gas: float = 1.0,
+    z_d_gas: float = 0.1,
+) -> np.ndarray:
+    """Calculate epicyclic frequency using galpy.
 
     Args:
         R: Cylindrical radial positions (kpc).
-        v_c: Circular velocity at each radius (km/s).
+        [Mass parameters...]
 
     Returns:
         Epicyclic frequency kappa at each radius (km/s/kpc).
     """
-    # Numerical derivative of v_c using gradient
-    dv_dR = np.gradient(v_c, R, edge_order=2)
-
-    # kappa^2 = (2*v_c/R)^2 + 2*v_c/R * dv_c/dR
-    kappa_sq = (2 * v_c / R) ** 2 + 2 * v_c / R * dv_dR
-    kappa_sq = np.maximum(kappa_sq, 0.0)
-
-    return np.sqrt(kappa_sq)
+    pots = get_galpy_potentials(
+        m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )
+    
+    # epifreq returns frequency
+    # R must be > 0
+    R_safe = np.maximum(R, 1e-4)
+    kappa = epifreq(pots, R_safe)
+    
+    return kappa
 
 
 def toomre_q_dispersion(
-    R: np.ndarray, v_c: np.ndarray, sigma_surf: np.ndarray, Q_target: float
+    R: np.ndarray,
+    v_c: np.ndarray,
+    sigma_surf: np.ndarray,
+    Q_target: float,
+    m200: float,
+    c200: float,
+    m_bulge: float,
+    a_bulge: float,
+    M_disc_star: float,
+    R_d_star: float,
+    z_d_star: float,
+    M_disc_gas: float = 0.0,
+    R_d_gas: float = 1.0,
+    z_d_gas: float = 0.1,
 ) -> np.ndarray:
     """Calculate radial velocity dispersion from Toomre Q.
 
@@ -33,16 +69,19 @@ def toomre_q_dispersion(
         v_c: Circular velocity at each radius (km/s).
         sigma_surf: Surface density at each radius (Msun/kpc^2).
         Q_target: Target Toomre Q parameter.
+        [Mass parameters for kappa calculation...]
 
     Returns:
         Radial velocity dispersion sigma_R (km/s).
     """
-    G = 4.302e-6  # kpc (km/s)^2 / Msun
-    kappa = epicyclic_frequency(R, v_c)
+    # Calculate kappa using galpy
+    kappa = epicyclic_frequency(
+        R, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )
 
     # Q = sigma_R * kappa / (pi * G * Sigma)
     # sigma_R = Q * pi * G * Sigma / kappa
-    sigma_R = Q_target * np.pi * G * sigma_surf / kappa
+    sigma_R = Q_target * np.pi * G.value * sigma_surf / kappa
 
     # Floor to avoid instabilities
     sigma_R = np.maximum(sigma_R, 5.0)  # Minimum 5 km/s
@@ -104,13 +143,13 @@ def jeans_dispersion_spherical(
     Returns:
         Radial velocity dispersion sigma_r (km/s).
     """
-    G = 4.302e-6  # kpc (km/s)^2 / Msun
-
     # sigma_r^2 = (1/rho) * integral_r^infty (rho * G * M(<r') / r'^2 * dr')
     # Simplified: assume constant beta and use local approximation
 
     # For isotropic case and power-law profiles, approximate as:
-    sigma_r_sq = G * m_enc / (2 * r) * (1 - beta)
+    # Avoid division by zero at r=0
+    r_safe = np.maximum(r, 1e-4)
+    sigma_r_sq = G.value * m_enc / (2 * r_safe) * (1 - beta)
     sigma_r_sq = np.maximum(sigma_r_sq, 0.0)
 
     return np.sqrt(sigma_r_sq)
@@ -162,9 +201,12 @@ def escape_velocity(
     c200: float,
     m_bulge: float,
     a_bulge: float,
-    M_disc: float,
-    R_d: float,
-    z_d: float,
+    M_disc_star: float,
+    R_d_star: float,
+    z_d_star: float,
+    M_disc_gas: float = 0.0,
+    R_d_gas: float = 1.0,
+    z_d_gas: float = 0.1,
 ) -> np.ndarray:
     """Calculate escape velocity at given positions.
 
@@ -175,16 +217,16 @@ def escape_velocity(
         c200: Halo concentration.
         m_bulge: Bulge mass (Msun).
         a_bulge: Bulge scale length (kpc).
-        M_disc: Disc mass (Msun).
-        R_d: Disc scale length (kpc).
-        z_d: Disc scale height (kpc).
+        M_disc_star: Stellar disc mass (Msun).
+        R_d_star: Stellar disc scale length (kpc).
+        z_d_star: Stellar disc scale height (kpc).
+        M_disc_gas: Gas disc mass (Msun).
+        R_d_gas: Gas disc scale length (kpc).
+        z_d_gas: Gas disc scale height (kpc).
 
     Returns:
         Escape velocity at each position (km/s).
     """
-    from .potentials import hernquist_potential, miyamoto_nagai_potential, nfw_potential
-    from .profiles import nfw_params
-
     r_s, _ = nfw_params(m200, c200)
 
     # Total potential
@@ -193,8 +235,11 @@ def escape_velocity(
     if m_bulge > 0:
         psi_total += hernquist_potential(R, z, m_bulge, a_bulge)
 
-    if M_disc > 0:
-        psi_total += miyamoto_nagai_potential(R, z, M_disc, R_d, z_d)
+    if M_disc_star > 0:
+        psi_total += miyamoto_nagai_potential(R, z, M_disc_star, R_d_star, z_d_star)
+
+    if M_disc_gas > 0:
+        psi_total += miyamoto_nagai_potential(R, z, M_disc_gas, R_d_gas, z_d_gas)
 
     # v_esc^2 = -2 * Psi (assuming Psi -> 0 at infinity)
     v_esc_sq = -2 * psi_total

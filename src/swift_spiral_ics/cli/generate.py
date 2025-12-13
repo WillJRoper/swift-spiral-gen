@@ -48,15 +48,21 @@ def parse_args():
     # Simulation time parameters
     parser.add_argument("--time-end-gyr", type=float, default=2.0, help="Simulation end time (Gyr)")
     parser.add_argument(
-        "--snapshot-dt-myr", type=float, default=10.0, help="Snapshot spacing (Myr)"
+        "--snapshot-dt-myr", type=float, default=0.0001, help="Snapshot spacing (Myr)"
     )
     parser.add_argument(
         "--snapshot-basename", type=str, default="snapshot", help="Snapshot basename for YAML output"
     )
     parser.add_argument(
+        "--dt-min-gyr",
+        type=float,
+        default=1e-15,
+        help="Minimum physical timestep (Gyr). This will override dt_min in the parameter file.",
+    )
+    parser.add_argument(
         "--param-template",
         type=str,
-        default="eagle_isolated",
+        default=available_param_templates()[0],
         choices=available_param_templates(),
         help="Packaged SWIFT parameter template to start from",
     )
@@ -65,6 +71,24 @@ def parse_args():
         type=str,
         default=None,
         help="Optional MetaData run_name override for the parameter file",
+    )
+    parser.add_argument(
+        "--bg-gas-density-msun-kpc3",
+        type=float,
+        default=0.0,
+        help="Uniform background gas density (Msun / kpc^3); 0 disables background gas",
+    )
+    parser.add_argument(
+        "--bg-dm-density-msun-kpc3",
+        type=float,
+        default=0.0,
+        help="Uniform background dark matter density (Msun / kpc^3); 0 disables background DM",
+    )
+    parser.add_argument(
+        "--bg-grid-kpc",
+        type=float,
+        default=0.0,
+        help="Optional regular grid spacing (kpc) for background gas+DM; 0 disables the grid",
     )
 
     # Per-galaxy halo parameters
@@ -461,7 +485,7 @@ def generate_galaxy(
     if N_bulge > 0:
         print("  Sampling bulge velocities...")
         vx_bulge, vy_bulge, vz_bulge = sample_bulge_velocities(
-            x_bulge, y_bulge, z_bulge, m200, c200, m_bulge, a_bulge, m_disc_star, R_d, z_d, rng
+            x_bulge, y_bulge, z_bulge, m200, c200, m_bulge, a_bulge, m_disc_star, R_d, z_d, m_gas, R_g, z_g, rng
         )
     else:
         vx_bulge = vy_bulge = vz_bulge = np.array([])
@@ -491,6 +515,93 @@ def generate_galaxy(
     }
 
     return galaxy_data
+
+
+def add_uniform_background(
+    combined_data: dict,
+    box_size: float,
+    m_part: float,
+    rho_gas: float,
+    rho_dm: float,
+    grid_spacing: float,
+    rng: np.random.Generator,
+) -> dict:
+    """Add uniform background gas and DM to the combined particle set."""
+    volume = box_size**3
+    updated = dict(combined_data)
+
+    if rho_dm > 0:
+        n_dm = int(round(rho_dm * volume / m_part))
+        if n_dm > 0:
+            pos_dm = rng.uniform(0, box_size, (n_dm, 3))
+            vel_dm = np.zeros((n_dm, 3), dtype=float)
+            if updated["dm"]["pos"].size == 0:
+                updated["dm"]["pos"] = pos_dm
+                updated["dm"]["vel"] = vel_dm
+            else:
+                updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], pos_dm])
+                updated["dm"]["vel"] = np.vstack([updated["dm"]["vel"], vel_dm])
+            print(f"  Added uniform DM background: N={n_dm}, rho={rho_dm:.3e} Msun/kpc^3")
+
+    if rho_gas > 0:
+        n_gas = int(round(rho_gas * volume / m_part))
+        if n_gas > 0:
+            pos_gas = rng.uniform(0, box_size, (n_gas, 3))
+            vel_gas = np.zeros((n_gas, 3), dtype=float)
+            if updated["gas"]["pos"].size == 0:
+                updated["gas"]["pos"] = pos_gas
+                updated["gas"]["vel"] = vel_gas
+            else:
+                updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], pos_gas])
+                updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
+            print(f"  Added uniform gas background: N={n_gas}, rho={rho_gas:.3e} Msun/kpc^3")
+
+    # Optional regular grid background for both gas and DM
+    if grid_spacing > 0:
+        coords_1d = np.arange(0, box_size, grid_spacing)
+        if coords_1d.size > 0:
+            gx, gy, gz = np.meshgrid(coords_1d, coords_1d, coords_1d, indexing="ij")
+            grid_positions = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
+            # Add small random jitter to avoid perfectly aligned cells; use independent jitter per component
+            jitter_gas = rng.normal(scale=0.1 * grid_spacing, size=grid_positions.shape)
+            jitter_dm = rng.normal(scale=0.1 * grid_spacing, size=grid_positions.shape)
+            gas_grid = np.mod(grid_positions + jitter_gas, box_size)
+            dm_grid = np.mod(grid_positions + jitter_dm, box_size)
+            if grid_positions.size > 0:
+                if updated["gas"]["pos"].size == 0:
+                    updated["gas"]["pos"] = gas_grid.copy()
+                    updated["gas"]["vel"] = np.zeros_like(gas_grid)
+                else:
+                    updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], gas_grid])
+                    updated["gas"]["vel"] = np.vstack(
+                        [updated["gas"]["vel"], np.zeros_like(gas_grid)]
+                    )
+
+                if updated["dm"]["pos"].size == 0:
+                    updated["dm"]["pos"] = dm_grid.copy()
+                    updated["dm"]["vel"] = np.zeros_like(dm_grid)
+                else:
+                    updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], dm_grid])
+                    updated["dm"]["vel"] = np.vstack(
+                        [updated["dm"]["vel"], np.zeros_like(dm_grid)]
+                    )
+                print(
+                    f"  Added grid background: spacing={grid_spacing} kpc, N={len(grid_positions)} per component"
+                )
+
+    return updated
+
+
+def compute_cosmic_background_densities(
+    h: float = 0.6777, omega_cdm: float = 0.2587481, omega_b: float = 0.0482519
+) -> tuple[float, float]:
+    """Return cosmic-mean DM and gas densities in Msun/kpc^3 using the template cosmology."""
+    G_kpc = 4.30091e-6  # (km/s)^2 kpc / Msun
+    H0_kpc = 0.1 * h  # 100 km/s/Mpc -> 0.1 km/s/kpc
+    rho_crit = 3 * H0_kpc**2 / (8 * np.pi * G_kpc)  # Msun/kpc^3
+    rho_dm = rho_crit * omega_cdm
+    rho_gas = rho_crit * omega_b
+    return rho_dm, rho_gas
 
 
 def main():
@@ -620,6 +731,17 @@ def main():
         if len(combined_data[comp_name]["pos"]) > 0:
             combined_data[comp_name]["pos"] += box_center
 
+    # Add uniform background components (no recentering needed)
+    combined_data = add_uniform_background(
+        combined_data,
+        box_size=args.box_kpc,
+        m_part=args.m_part_msun,
+        rho_gas=args.bg_gas_density_msun_kpc3,
+        rho_dm=args.bg_dm_density_msun_kpc3,
+        grid_spacing=args.bg_grid_kpc,
+        rng=rng,
+    )
+
     # Write IC file
     print("\n" + "=" * 70)
     print("WRITING OUTPUT FILES")
@@ -643,12 +765,13 @@ def main():
         box_size=args.box_kpc,
         time_end_gyr=args.time_end_gyr,
         snapshot_dt_myr=args.snapshot_dt_myr,
+        dt_min_gyr=args.dt_min_gyr,
         output_basename=args.snapshot_basename,
         run_name=args.run_name,
         param_template=args.param_template,
     )
     write_yaml_file(args.out_params, params)
-    print_yaml_summary(args.out_params, args.time_end_gyr, args.snapshot_dt_myr)
+    print_yaml_summary(args.out_params, args.time_end_gyr, args.snapshot_dt_myr, args.dt_min_gyr)
 
     print("\n" + "=" * 70)
     print("GENERATION COMPLETE")

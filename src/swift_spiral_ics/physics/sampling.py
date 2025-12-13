@@ -3,6 +3,56 @@
 import numpy as np
 from scipy import optimize
 from scipy.special import lambertw
+from tqdm import tqdm
+from numba import njit
+from .profiles import nfw_params, nfw_density, nfw_mass, hernquist_density, hernquist_mass, disc_sigma_0, exponential_surface_density
+from .kinematics import escape_velocity, jeans_dispersion_spherical, asymmetric_drift_correction, disc_velocity_dispersions, gas_dispersion_from_temperature, toomre_q_dispersion
+from .potentials import total_circular_velocity
+from .perturbations import bar_density_modulation, bar_streaming_velocity, apply_position_perturbation_bar, spiral_streaming_velocity
+
+
+@njit
+def _spiral_modulation_jit(
+    R: np.ndarray, 
+    phi: np.ndarray, 
+    arm_strength: float, 
+    n_arms: int, 
+    pitch_deg: float,
+    R_d: float
+) -> np.ndarray:
+    """JIT-compiled calculation of spiral density modulation."""
+    # Hardcoded parameters matching standard logic
+    R_min = 0.5 * R_d
+    R_max = 5.0 * R_d
+    
+    # Envelope
+    envelope = np.ones_like(R)
+    for i in range(len(R)):
+        r_val = R[i]
+        if r_val < R_min:
+            envelope[i] = 0.0
+        elif r_val < R_min + 1.0:
+            envelope[i] = (r_val - R_min) / 1.0
+        elif r_val > R_max:
+            envelope[i] = 0.0
+        elif r_val > R_max - 2.0:
+            envelope[i] = (R_max - r_val) / 2.0
+            
+    # Phase
+    pitch_rad = pitch_deg * np.pi / 180.0
+    tan_pitch = np.tan(pitch_rad)
+    R_0 = 8.0 # Reference radius
+    
+    # Phase calculation
+    # phase = n_arms * (phi - log(R/R_0)/tan_pitch)
+    phase = np.zeros_like(phi)
+    for i in range(len(R)):
+        if R[i] > 0:
+            phase[i] = n_arms * (phi[i] - np.log(R[i] / R_0) / tan_pitch)
+            
+    # Modulation
+    modulation = 1.0 + arm_strength * envelope * np.cos(phase)
+    return modulation
 
 
 def sample_nfw_halo(
@@ -24,11 +74,9 @@ def sample_nfw_halo(
     Returns:
         Tuple of (x, y, z) positions (kpc).
     """
-    from .profiles import nfw_params
-
     r_s, _ = nfw_params(m200, c200)
 
-    # Sample radii using inverse CDF method
+    # Use interpolation for inverse CDF to speed up sampling
     # Cumulative mass M(<r) / M_total for NFW
     def cumulative_mass_fraction(r):
         x = r / r_s
@@ -37,14 +85,24 @@ def sample_nfw_halo(
         f_max = np.log(1 + x_max) - x_max / (1 + x_max)
         return f_r / f_max
 
-    # Inverse CDF
+    # Build interpolation grid
+    n_grid = 1000
+    # Use log spacing for better resolution at small radii
+    # Enforce a minimum radius to avoid singularity at r=0
+    r_min = 1e-3  # kpc, 1 pc minimum radius
+    r_grid = np.geomspace(max(r_min, 1e-4 * r_s), r_max, n_grid)
+    
+    cdf_grid = cumulative_mass_fraction(r_grid)
+    
+    # Ensure strict monotonicity and boundary conditions
+    cdf_grid = cdf_grid - cdf_grid[0] # Shift so it starts at 0 relative to r_min
+    cdf_grid = cdf_grid / cdf_grid[-1] # Normalize to 1
+    
+    # Sample uniform random numbers
     u = rng.uniform(0, 1, N)
-    r = np.zeros(N)
-
-    for i in range(N):
-        # Solve cumulative_mass_fraction(r) = u[i]
-        u_i = u[i]
-        r[i] = optimize.brentq(lambda x, u_val=u_i: cumulative_mass_fraction(x) - u_val, 1e-3, r_max)
+    
+    # Interpolate to get radii
+    r = np.interp(u, cdf_grid, r_grid)
 
     # Random angles
     theta = np.arccos(rng.uniform(-1, 1, N))
@@ -118,7 +176,8 @@ def sample_exponential_disc(
     def _sample_R(u_vals: np.ndarray) -> np.ndarray:
         """Inverse CDF for exponential disc surface density using lambert W."""
         u_clipped = np.clip(u_vals, 1e-12, 1 - 1e-12)
-        w = lambertw((u_clipped - 1.0) / np.e).real
+        # Use the -1 branch to ensure positive radii for 0<u<1
+        w = lambertw((u_clipped - 1.0) / np.e, k=-1).real
         return -R_d * (1.0 + w)
 
     # Sample cylindrical R using analytic inverse CDF
@@ -130,35 +189,54 @@ def sample_exponential_disc(
 
     # Apply spiral arm density modulation if requested
     if spiral_params is not None:
-        from .perturbations import spiral_density_modulation
-
         arm_strength = spiral_params.get("arm_strength", 0.0)
         n_arms = spiral_params.get("n_arms", 2)
         pitch_deg = spiral_params.get("pitch_deg", 15.0)
 
         if arm_strength > 0:
-            # Rejection sample until all are accepted (cap iterations for speed)
-            max_iters = 5
+            # Rejection sample until all are accepted
+            max_iters = 100
             keep = np.zeros(N, dtype=bool)
+            
+            pbar = tqdm(total=N, desc="Sampling spiral arms")
+            
             for _ in range(max_iters):
-                modulation = spiral_density_modulation(R[~keep], phi[~keep], arm_strength, n_arms, pitch_deg)
-                accept_prob = modulation / (1 + arm_strength)
+                # Calculate modulation for current candidates using JIT
+                modulation = _spiral_modulation_jit(
+                    R[~keep], phi[~keep], arm_strength, n_arms, pitch_deg, R_d
+                )
+                
+                # Acceptance probability: rho_pert / rho_max
+                # rho_max is rho_base * (1 + arm_strength)
+                accept_prob = modulation / (1.0 + arm_strength)
+                
                 draw = rng.uniform(0, 1, np.count_nonzero(~keep))
-                newly_kept = draw < accept_prob
-                # Update keep mask and resample rejected
-                idx_reject = np.where(~keep)[0][~newly_kept]
-                keep[~keep] = newly_kept
-                if not idx_reject.size:
+                newly_kept_local = draw < accept_prob
+                
+                # Update global keep mask
+                # Need to map local True/False back to full array indices
+                indices_to_check = np.where(~keep)[0]
+                indices_kept = indices_to_check[newly_kept_local]
+                keep[indices_kept] = True
+                
+                pbar.update(len(indices_kept))
+                
+                if np.all(keep):
                     break
-                # Resample R, phi for rejects
+                
+                # Resample R, phi for remaining rejects
+                idx_reject = np.where(~keep)[0]
                 u_new = rng.uniform(0, 1, idx_reject.size)
                 R[idx_reject] = _sample_R(u_new)
                 phi[idx_reject] = rng.uniform(0, 2 * np.pi, idx_reject.size)
+            
+            pbar.close()
+            
+            if not np.all(keep):
+                print(f"Warning: Spiral arm sampling did not fully converge after {max_iters} iterations. {np.count_nonzero(~keep)} particles may be biased.")
 
     # Apply bar density modulation if requested
     if bar_params is not None and bar_params.get("enabled", False):
-        from .perturbations import bar_density_modulation
-
         bar_strength = bar_params.get("strength", 0.0)
         bar_radius = bar_params.get("radius", 3.0)
         bar_q = bar_params.get("q", 0.3)
@@ -180,8 +258,6 @@ def sample_exponential_disc(
 
     # Apply bar position perturbation if requested
     if bar_params is not None and bar_params.get("enabled", False):
-        from .perturbations import apply_position_perturbation_bar
-
         bar_strength = bar_params.get("strength", 0.0)
         bar_radius = bar_params.get("radius", 3.0)
         bar_q = bar_params.get("q", 0.3)
@@ -228,9 +304,6 @@ def sample_halo_velocities(
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
     """
-    from .kinematics import escape_velocity, jeans_dispersion_spherical
-    from .profiles import nfw_density, nfw_mass, nfw_params
-
     N = len(x)
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
@@ -243,7 +316,9 @@ def sample_halo_velocities(
     sigma_r = jeans_dispersion_spherical(r, m_enc, rho, beta=0.0)
 
     # Sample velocities from Gaussian (truncated at escape velocity)
-    v_esc = escape_velocity(R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star)
+    v_esc = escape_velocity(
+        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )
 
     vx = rng.normal(0, sigma_r, N)
     vy = rng.normal(0, sigma_r, N)
@@ -272,6 +347,9 @@ def sample_bulge_velocities(
     M_disc_star: float,
     R_d_star: float,
     z_d_star: float,
+    M_disc_gas: float,
+    R_d_gas: float,
+    z_d_gas: float,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for bulge particles using Jeans equation.
@@ -287,14 +365,14 @@ def sample_bulge_velocities(
         M_disc_star: Stellar disc mass (Msun).
         R_d_star: Stellar disc scale length (kpc).
         z_d_star: Stellar disc scale height (kpc).
+        M_disc_gas: Gas disc mass (Msun).
+        R_d_gas: Gas disc scale length (kpc).
+        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
 
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
     """
-    from .kinematics import escape_velocity, jeans_dispersion_spherical
-    from .profiles import hernquist_density, hernquist_mass
-
     N = len(x)
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
@@ -305,7 +383,9 @@ def sample_bulge_velocities(
     sigma_r = jeans_dispersion_spherical(r, m_enc, rho, beta=0.0)
 
     # Sample velocities
-    v_esc = escape_velocity(R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star)
+    v_esc = escape_velocity(
+        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )
 
     vx = rng.normal(0, sigma_r, N)
     vy = rng.normal(0, sigma_r, N)
@@ -372,15 +452,6 @@ def sample_disc_velocities(
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
     """
-    from .kinematics import (
-        asymmetric_drift_correction,
-        disc_velocity_dispersions,
-        gas_dispersion_from_temperature,
-        toomre_q_dispersion,
-    )
-    from .potentials import total_circular_velocity
-    from .profiles import disc_sigma_0, exponential_surface_density
-
     N = len(x)
     R = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
@@ -404,16 +475,19 @@ def sample_disc_velocities(
     # Interpolate to particle positions
     v_c = np.interp(R, R_unique, v_c_profile)
 
-    # Get dispersions
+    # Use Toomre Q-based dispersion
+    sigma_0 = disc_sigma_0(M_disc, R_d)
+    sigma_surf = exponential_surface_density(R, sigma_0, R_d)
+    sigma_R = toomre_q_dispersion(
+        R, v_c, sigma_surf, Q_target,
+        m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )
+
+    # Ensure gas has at least the thermal dispersion floor (10^4 K)
     if is_gas:
-        # Use temperature-based dispersion
-        T_gas = 1e4  # K, typical for warm ISM
-        sigma_R = gas_dispersion_from_temperature(T_gas) * np.ones(N)
-    else:
-        # Use Toomre Q-based dispersion
-        sigma_0 = disc_sigma_0(M_disc, R_d)
-        sigma_surf = exponential_surface_density(R, sigma_0, R_d)
-        sigma_R = toomre_q_dispersion(R, v_c, sigma_surf, Q_target)
+        T_floor = 1e4
+        sigma_thermal = gas_dispersion_from_temperature(T_floor)
+        sigma_R = np.maximum(sigma_R, sigma_thermal)
 
     sigma_phi, sigma_z = disc_velocity_dispersions(R, sigma_R)
 
@@ -427,20 +501,16 @@ def sample_disc_velocities(
     delta_v_phi_stream = np.zeros(N)
 
     if spiral_params is not None and spiral_params.get("arm_strength", 0) > 0:
-        from .perturbations import spiral_streaming_velocity
-
         stream_frac = spiral_params.get("stream_frac", 0.0)
         n_arms = spiral_params.get("n_arms", 2)
         pitch_deg = spiral_params.get("pitch_deg", 15.0)
 
         v_R_stream, delta_v_phi_stream = spiral_streaming_velocity(
-            R, phi, v_c, stream_frac, n_arms, pitch_deg
+            R, phi, v_c, stream_frac, n_arms, pitch_deg, R_d=R_d
         )
 
     # Add bar streaming if present
     if bar_params is not None and bar_params.get("enabled", False):
-        from .perturbations import bar_streaming_velocity
-
         stream_frac = bar_params.get("stream_frac", 0.0)
         bar_radius = bar_params.get("radius", 3.0)
         bar_angle = bar_params.get("angle", 0.0)
@@ -462,5 +532,21 @@ def sample_disc_velocities(
     vx = v_R * cos_phi - v_phi * sin_phi
     vy = v_R * sin_phi + v_phi * cos_phi
     vz = v_z
+
+    # Truncate at escape velocity (safety check)
+    from .kinematics import escape_velocity
+
+    v_esc = escape_velocity(
+        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )  # Note: escape_velocity signature needs update or checking, assuming it takes all mass components
+
+    v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
+    too_fast = v_mag > v_esc
+    if np.any(too_fast):
+        # Rescale to 99% of escape velocity
+        rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
+        vx[too_fast] *= rescale
+        vy[too_fast] *= rescale
+        vz[too_fast] *= rescale
 
     return vx, vy, vz

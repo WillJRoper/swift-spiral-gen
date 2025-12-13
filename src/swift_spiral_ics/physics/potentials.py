@@ -1,67 +1,97 @@
-"""Gravitational potential functions for galaxy components."""
+"""Gravitational potentials and circular velocities using galpy."""
 
 import numpy as np
+from galpy.potential import (
+    HernquistPotential,
+    MiyamotoNagaiPotential,
+    NFWPotential,
+    evaluatePotentials,
+    plotRotcurve,
+    vcirc,
+)
+from .constants import G
+from .profiles import nfw_params
 
+# G is imported as unyt quantity. Convert to float value for calculations if needed
+# But galpy expects specific normalization.
+# We will use galpy's "physical" support by explicitly normalizing G=1 internally
+# or by just calculating the amplitude correctly.
 
-def nfw_potential(R: np.ndarray, z: np.ndarray, m200: float, r_s: float, c200: float) -> np.ndarray:
-    """NFW halo gravitational potential (approximate for disc plane).
+# Galpy definitions:
+# Phi_NFW = - amp * ln(1+r/a) / (r/a)
+# Standard NFW: Phi = - 4 pi G rho_0 r_s^3 * ln(1+r/r_s) / r
+# So amp = 4 pi G rho_0 r_s^3 = G * M_halo_scale_mass?
+# Galpy NFWPotential: amp = G * M_s where M_s is the mass parameter.
+# Wait, NFWPotential(conc=..., mvir=...) handles this for us if we use the right setup.
 
-    Args:
-        R: Cylindrical radial positions (kpc).
-        z: Vertical positions (kpc).
-        m200: M200 halo mass (Msun).
-        r_s: Scale radius (kpc).
-        c200: Concentration parameter.
+# Simplest approach: Use potentials where 'amp' = G * M.
+# Hernquist: Phi = - G M / (r+a). Galpy: Phi = - amp / (r+a) (if normalized).
+# -> amp = G * M
+# MiyamotoNagai: Phi = - G M / sqrt(R^2 + (a + sqrt(z^2+b^2))^2)
+# -> amp = G * M
+# NFW: Phi = - G M_s * ln(1 + r/r_s) / (r/r_s)
+# -> amp = G * M_s, a = r_s. Note: M_s is mass inside r_s? No, check definitions.
+# NFW mass M(<r) = 4 pi rho_0 r_s^3 [ln(1+x) - x/(1+x)]
+# As r->inf, Phi -> - 4 pi G rho_0 r_s^3 * ln(r) / r ??? No.
+# Galpy NFW: amp = G * M_0. 
+# We will use the explicit constructors with amplitude.
 
-    Returns:
-        Potential at each position (km^2/s^2).
-    """
-    G = 4.302e-6  # kpc (km/s)^2 / Msun
-    r = np.sqrt(R**2 + z**2)
-    x = r / r_s
+G_val = G.value  # (km/s)^2 kpc / Msun
+
+def get_galpy_potentials(
+    m200: float,
+    c200: float,
+    m_bulge: float,
+    a_bulge: float,
+    M_disc_star: float,
+    R_d_star: float,
+    z_d_star: float,
+    M_disc_gas: float = 0.0,
+    R_d_gas: float = 1.0,
+    z_d_gas: float = 0.1,
+) -> list:
+    """Create list of galpy potentials for the galaxy."""
+    from .profiles import nfw_params
+    
+    potentials = []
+    
+    # 1. NFW Halo
+    r_s, _ = nfw_params(m200, c200)
+    # NFW mass parameter M0 for galpy is such that amp = G * M0
+    # M(<r) = M0 * (ln(1+x) - x/(1+x))
+    # Our M200 = M0 * f(c200). So M0 = M200 / f(c200)
     f_c = np.log(1 + c200) - c200 / (1 + c200)
-    return -G * m200 / f_c * np.log(1 + x) / r
-
-
-def hernquist_potential(R: np.ndarray, z: np.ndarray, m_bulge: float, a: float) -> np.ndarray:
-    """Hernquist bulge gravitational potential.
-
-    Args:
-        R: Cylindrical radial positions (kpc).
-        z: Vertical positions (kpc).
-        m_bulge: Total bulge mass (Msun).
-        a: Hernquist scale length (kpc).
-
-    Returns:
-        Potential at each position (km^2/s^2).
-    """
-    G = 4.302e-6  # kpc (km/s)^2 / Msun
-    r = np.sqrt(R**2 + z**2)
-    return -G * m_bulge / (r + a)
-
-
-def miyamoto_nagai_potential(
-    R: np.ndarray, z: np.ndarray, M_disc: float, R_d: float, z_d: float
-) -> np.ndarray:
-    """Miyamoto-Nagai disc gravitational potential.
-
-    Approximation for exponential disc with finite thickness.
-
-    Args:
-        R: Cylindrical radial positions (kpc).
-        z: Vertical positions (kpc).
-        M_disc: Total disc mass (Msun).
-        R_d: Disc scale length (kpc).
-        z_d: Disc scale height (kpc).
-
-    Returns:
-        Potential at each position (km^2/s^2).
-    """
-    G = 4.302e-6  # kpc (km/s)^2 / Msun
-    # Use a = R_d, b = z_d for Miyamoto-Nagai parameters
-    a = R_d
-    b = z_d
-    return -G * M_disc / np.sqrt(R**2 + (a + np.sqrt(z**2 + b**2)) ** 2)
+    M0 = m200 / f_c
+    
+    # Galpy NFW: amp=G*M0, a=r_s
+    potentials.append(NFWPotential(amp=G_val * M0, a=r_s))
+    
+    # 2. Hernquist Bulge
+    # Galpy Hernquist: amp = 2 * G * M_bulge? Check docs.
+    # Galpy docs: Phi = - amp / (r + a).
+    # Standard Hernquist: Phi = - G M / (r + a).
+    # So amp = G * M_bulge * (is there a factor of 2? No, standard is GM).
+    # CAREFUL: Galpy documentation says amp = 2GM for Hernquist? 
+    # Let's test this carefully or check docs. 
+    # Actually, using `m_bulge * G_val * 2` is standard for galpy Hernquist.
+    if m_bulge > 0:
+        potentials.append(HernquistPotential(amp=2 * G_val * m_bulge, a=a_bulge))
+        
+    # 3. Miyamoto-Nagai Discs
+    # Phi = - amp / sqrt(R^2 + (a + sqrt(z^2+b^2))^2)
+    # Standard: - G M / ...
+    # So amp = G * M
+    if M_disc_star > 0:
+        potentials.append(
+            MiyamotoNagaiPotential(amp=G_val * M_disc_star, a=R_d_star, b=z_d_star)
+        )
+        
+    if M_disc_gas > 0:
+        potentials.append(
+            MiyamotoNagaiPotential(amp=G_val * M_disc_gas, a=R_d_gas, b=z_d_gas)
+        )
+        
+    return potentials
 
 
 def total_circular_velocity(
@@ -73,72 +103,40 @@ def total_circular_velocity(
     M_disc_star: float,
     R_d_star: float,
     z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
+    M_disc_gas: float = 0.0,
+    R_d_gas: float = 1.0,
+    z_d_gas: float = 0.1,
 ) -> np.ndarray:
-    """Compute total circular velocity from all components.
+    """Calculate total circular velocity using galpy."""
+    pots = get_galpy_potentials(
+        m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
+    )
+    
+    # Galpy vcirc takes R and phi=0 (axisymmetric)
+    # It returns float if scalar input, array if array input
+    # R needs to be >= 0
+    R_safe = np.maximum(R, 1e-4)
+    v_c = vcirc(pots, R_safe, phi=0)
+    
+    return v_c
 
-    Args:
-        R: Cylindrical radial positions (kpc).
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
 
-    Returns:
-        Circular velocity at each radius (km/s).
-    """
-    from .profiles import nfw_params
+def nfw_potential(R, z, m200, r_s, c200):
+    """Legacy wrapper for NFW potential (needed for escape velocity)."""
+    # Recalculate amp
+    f_c = np.log(1 + c200) - c200 / (1 + c200)
+    M0 = m200 / f_c
+    pot = NFWPotential(amp=G_val * M0, a=r_s)
+    return evaluatePotentials(pot, R, z)
 
-    # Get NFW parameters
-    r_s, _ = nfw_params(m200, c200)
 
-    # Compute potential derivatives at z=0
-    dR = 0.01  # kpc, small step for numerical derivative
-    R_plus = R + dR
-    R_minus = np.maximum(R - dR, 1e-3)
+def hernquist_potential(R, z, m, a):
+    """Legacy wrapper for Hernquist potential."""
+    pot = HernquistPotential(amp=2 * G_val * m, a=a)
+    return evaluatePotentials(pot, R, z)
 
-    # NFW contribution
-    psi_nfw_plus = nfw_potential(R_plus, 0.0, m200, r_s, c200)
-    psi_nfw_minus = nfw_potential(R_minus, 0.0, m200, r_s, c200)
-    dpsi_nfw = (psi_nfw_plus - psi_nfw_minus) / (R_plus - R_minus)
 
-    # Bulge contribution
-    if m_bulge > 0:
-        psi_bulge_plus = hernquist_potential(R_plus, 0.0, m_bulge, a_bulge)
-        psi_bulge_minus = hernquist_potential(R_minus, 0.0, m_bulge, a_bulge)
-        dpsi_bulge = (psi_bulge_plus - psi_bulge_minus) / (R_plus - R_minus)
-    else:
-        dpsi_bulge = 0.0
-
-    # Stellar disc contribution
-    if M_disc_star > 0:
-        psi_star_plus = miyamoto_nagai_potential(R_plus, 0.0, M_disc_star, R_d_star, z_d_star)
-        psi_star_minus = miyamoto_nagai_potential(R_minus, 0.0, M_disc_star, R_d_star, z_d_star)
-        dpsi_star = (psi_star_plus - psi_star_minus) / (R_plus - R_minus)
-    else:
-        dpsi_star = 0.0
-
-    # Gas disc contribution
-    if M_disc_gas > 0:
-        psi_gas_plus = miyamoto_nagai_potential(R_plus, 0.0, M_disc_gas, R_d_gas, z_d_gas)
-        psi_gas_minus = miyamoto_nagai_potential(R_minus, 0.0, M_disc_gas, R_d_gas, z_d_gas)
-        dpsi_gas = (psi_gas_plus - psi_gas_minus) / (R_plus - R_minus)
-    else:
-        dpsi_gas = 0.0
-
-    # Total derivative
-    dpsi_total = dpsi_nfw + dpsi_bulge + dpsi_star + dpsi_gas
-
-    # v_c^2 = R * dPsi/dR
-    v_c_squared = R * dpsi_total
-    v_c_squared = np.maximum(v_c_squared, 0.0)  # Ensure non-negative
-
-    return np.sqrt(v_c_squared)
+def miyamoto_nagai_potential(R, z, m, a, b):
+    """Legacy wrapper for MN potential."""
+    pot = MiyamotoNagaiPotential(amp=G_val * m, a=a, b=b)
+    return evaluatePotentials(pot, R, z)

@@ -1,6 +1,7 @@
 """Density profile functions for galaxy components."""
 
 import numpy as np
+from .constants import G, H0
 
 
 def nfw_density(r: np.ndarray, m200: float, c200: float, delta_c: float, r_s: float) -> np.ndarray:
@@ -114,9 +115,13 @@ def critical_density() -> float:
     Returns:
         Critical density in Msun/kpc^3.
     """
-    # Using H0 = 70 km/s/Mpc, rho_crit = 3 H0^2 / (8 pi G)
-    # Result in Msun/kpc^3
-    return 277.5  # Approximate value
+    # Convert H0 from km/s/Mpc to km/s/kpc
+    H0_kpc = H0 / 1000.0
+
+    # rho_crit = 3 H^2 / (8 pi G)
+    rho_crit = 3 * H0_kpc**2 / (8 * np.pi * G)
+
+    return rho_crit.value
 
 
 def nfw_params(m200: float, c200: float) -> tuple[float, float]:

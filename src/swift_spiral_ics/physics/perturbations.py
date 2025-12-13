@@ -31,17 +31,29 @@ def spiral_arm_phase(
     return phase
 
 
-def spiral_arm_amplitude(R: np.ndarray, R_min: float = 2.0, R_max: float = 15.0) -> np.ndarray:
+def spiral_arm_amplitude(
+    R: np.ndarray, 
+    R_min: float = 2.0, 
+    R_max: float = 15.0,
+    R_d: float | None = None
+) -> np.ndarray:
     """Radial envelope for spiral arm strength.
 
     Args:
         R: Cylindrical radial positions (kpc).
-        R_min: Inner radius where arms start (kpc).
-        R_max: Outer radius where arms end (kpc).
+        R_min: Inner radius where arms start (kpc) (used if R_d is None).
+        R_max: Outer radius where arms end (kpc) (used if R_d is None).
+        R_d: Disc scale length (kpc). If provided, scales R_min/R_max relative to this.
 
     Returns:
         Envelope amplitude (0 to 1).
     """
+    if R_d is not None:
+        # Scale relative to disc size if provided
+        # Typical: start at ~0.5 scale lengths, extend to ~5
+        R_min = 0.5 * R_d
+        R_max = 5.0 * R_d
+
     envelope = np.ones_like(R)
 
     # Smooth turnon at inner radius
@@ -60,7 +72,12 @@ def spiral_arm_amplitude(R: np.ndarray, R_min: float = 2.0, R_max: float = 15.0)
 
 
 def spiral_density_modulation(
-    R: np.ndarray, phi: np.ndarray, arm_strength: float, n_arms: int, pitch_deg: float
+    R: np.ndarray, 
+    phi: np.ndarray, 
+    arm_strength: float, 
+    n_arms: int, 
+    pitch_deg: float,
+    R_d: float | None = None
 ) -> np.ndarray:
     """Calculate density modulation factor for spiral arms.
 
@@ -70,12 +87,13 @@ def spiral_density_modulation(
         arm_strength: Amplitude of density perturbation (fractional).
         n_arms: Number of spiral arms.
         pitch_deg: Pitch angle (degrees).
+        R_d: Disc scale length (kpc), optional.
 
     Returns:
         Density modulation factor (multiply base density by this).
     """
     phase = spiral_arm_phase(R, phi, n_arms, pitch_deg)
-    envelope = spiral_arm_amplitude(R)
+    envelope = spiral_arm_amplitude(R, R_d=R_d)
 
     # Density perturbation: rho' = rho * (1 + A * cos(phase))
     modulation = 1.0 + arm_strength * envelope * np.cos(phase)
@@ -90,6 +108,7 @@ def spiral_streaming_velocity(
     stream_frac: float,
     n_arms: int,
     pitch_deg: float,
+    R_d: float | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
     """Calculate streaming velocity perturbations for spiral arms.
 
@@ -100,12 +119,13 @@ def spiral_streaming_velocity(
         stream_frac: Streaming amplitude as fraction of v_c.
         n_arms: Number of spiral arms.
         pitch_deg: Pitch angle (degrees).
+        R_d: Disc scale length (kpc), optional.
 
     Returns:
         Tuple of (v_R, delta_v_phi) velocity perturbations (km/s).
     """
     phase = spiral_arm_phase(R, phi, n_arms, pitch_deg)
-    envelope = spiral_arm_amplitude(R)
+    envelope = spiral_arm_amplitude(R, R_d=R_d)
     pitch_rad = np.deg2rad(pitch_deg)
 
     # Streaming amplitude

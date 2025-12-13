@@ -183,6 +183,25 @@ class TestSwiftWriter:
                 h = f["PartType0/SmoothingLength"][:]
                 assert np.all(h > 0)
 
+    def test_stars_have_positive_smoothing_length(self):
+        """Test star particles have positive smoothing length."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+
+            N = 50
+            particle_data = {
+                "stars": {
+                    "pos": np.random.uniform(0, 10, (N, 3)),
+                    "vel": np.random.uniform(-100, 100, (N, 3)),
+                },
+            }
+
+            write_swift_ic(str(ic_file), 100.0, particle_data, 1e6)
+
+            with h5py.File(ic_file, "r") as f:
+                h = f["PartType4/SmoothingLength"][:]
+                assert np.all(h > 0)
+
 
 class TestYamlWriter:
     """Test YAML parameter file writer."""
@@ -197,14 +216,11 @@ class TestYamlWriter:
             output_basename="snap",
         )
 
-        assert isinstance(params, dict)
-        assert "MetaData" in params
-        assert "InternalUnitSystem" in params
-        assert "Gravity" in params
-        assert "SPH" in params
-        assert "InitialConditions" in params
-        assert params["InitialConditions"]["file_name"] == "test.hdf5"
-        assert params["Snapshots"]["basename"] == "snap"
+        assert isinstance(params, str)
+        assert "__RUN_NAME__" not in params
+        assert "run_name:" in params
+        assert "file_name:  test.hdf5" in params
+        assert "basename:            snap" in params
 
     def test_generate_swift_params_run_name_override(self):
         """Run name and template overrides are applied."""
@@ -214,12 +230,11 @@ class TestYamlWriter:
             time_end_gyr=1.0,
             snapshot_dt_myr=5.0,
             run_name="custom-run",
-            param_template="eagle_isolated",
+            param_template="eagle_ref_cosmo",
         )
 
-        assert params["MetaData"]["run_name"] == "custom-run"
-        assert params["Snapshots"]["delta_time"] == 0.005
-        assert params["Statistics"]["delta_time"] == 0.005
+        assert "run_name:   custom-run" in params
+        assert "delta_time:          0.005" in params
 
     def test_write_yaml_file(self):
         """Test YAML file writing."""
@@ -237,3 +252,6 @@ class TestYamlWriter:
 
             assert yaml_file.exists()
             assert yaml_file.stat().st_size > 0
+            text = yaml_file.read_text()
+            assert "file_name:  test.hdf5" in text
+            assert "basename:            snapshot" in text
