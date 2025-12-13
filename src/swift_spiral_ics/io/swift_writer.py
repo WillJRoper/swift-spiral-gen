@@ -48,6 +48,10 @@ def write_swift_ic(
         header.attrs["Flag_Entropy_ICs"] = 0
         header.attrs["NumFilesPerSnapshot"] = 1
         header.attrs["Time"] = 0.0
+        # Explicitly mark as non-cosmological
+        header.attrs["HubbleParam"] = 0.0
+        header.attrs["Omega0"] = 0.0
+        header.attrs["OmegaLambda"] = 0.0
 
         # Units group
         units = f.create_group("Units")

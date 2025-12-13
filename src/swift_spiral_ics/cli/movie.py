@@ -34,7 +34,8 @@ def render_snapshot(
         RGB image array (H, W, 3).
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-    box_size = data.metadata.boxsize[0].to("kpc").value
+    box_size_unyt = data.metadata.boxsize[0].to("kpc")
+    box_size = box_size_unyt.value
 
     # Project gas mass density
     # swiftsimio projects mass by default if 'project' is 'masses'
@@ -44,8 +45,8 @@ def render_snapshot(
     # Initialize combined density map
     combined_density = np.zeros((bins, bins))
     
-    # Define grid
-    region = [0, box_size, 0, box_size] # xmin, xmax, ymin, ymax in kpc
+    # Define grid with units to avoid cosmology confusion
+    region = [0 * unyt.kpc, box_size_unyt, 0 * unyt.kpc, box_size_unyt]
 
     # Gas
     if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
