@@ -79,6 +79,14 @@ def generate_swift_params(
     _set_nested(params, ["Statistics", "delta_time"], snapshot_dt_myr / 1000.0)
     _set_nested(params, ["Statistics", "time_first"], 0.0)
 
+    # Ensure recording triggers are populated (SWIFT parser rejects empty strings)
+    default_triggers = [1.0227e-4, 1.0227e-5]
+    snaps = params.setdefault("Snapshots", {})
+    if not snaps.get("recording_triggers_part"):
+        snaps["recording_triggers_part"] = default_triggers
+    if not snaps.get("recording_triggers_bpart"):
+        snaps["recording_triggers_bpart"] = default_triggers
+
     # Keep box size available for downstream consumers (currently unused in template)
     _set_nested(params, ["MetaData", "box_size_kpc"], box_size)
 
