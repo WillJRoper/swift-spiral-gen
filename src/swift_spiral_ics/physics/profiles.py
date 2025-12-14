@@ -115,13 +115,13 @@ def critical_density() -> float:
     Returns:
         Critical density in Msun/kpc^3.
     """
-    # Convert H0 from km/s/Mpc to km/s/kpc
-    H0_kpc = H0 / 1000.0
+    from .constants import G, H0
+    from unyt import Msun, kpc
 
     # rho_crit = 3 H^2 / (8 pi G)
-    rho_crit = 3 * H0_kpc**2 / (8 * np.pi * G)
+    rho_crit = 3 * H0**2 / (8 * np.pi * G)
 
-    return rho_crit.value
+    return rho_crit.to(Msun / kpc**3).value
 
 
 def nfw_params(m200: float, c200: float) -> tuple[float, float]:

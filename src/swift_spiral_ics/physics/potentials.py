@@ -2,15 +2,19 @@
 
 import numpy as np
 from galpy.potential import (
+    DoubleExponentialDiskPotential,
     HernquistPotential,
     MiyamotoNagaiPotential,
     NFWPotential,
+    RazorThinExponentialDiskPotential,
     evaluatePotentials,
     plotRotcurve,
     vcirc,
 )
+from tqdm import tqdm
 from .constants import G
 from .profiles import nfw_params
+
 
 # G is imported as unyt quantity. Convert to float value for calculations if needed
 # But galpy expects specific normalization.
@@ -72,23 +76,31 @@ def get_galpy_potentials(
     # Standard Hernquist: Phi = - G M / (r + a).
     # So amp = G * M_bulge * (is there a factor of 2? No, standard is GM).
     # CAREFUL: Galpy documentation says amp = 2GM for Hernquist? 
-    # Let's test this carefully or check docs. 
-    # Actually, using `m_bulge * G_val * 2` is standard for galpy Hernquist.
+    # Let's check source or assume standard definition: amp is prefactor.
+    # "amp : amplitude to be applied to the potential (default: 1); can be a Quantity with units of mass or Gxmass"
+    # If we provide G*M, it should be correct.
     if m_bulge > 0:
         potentials.append(HernquistPotential(amp=2 * G_val * m_bulge, a=a_bulge))
-        
-    # 3. Miyamoto-Nagai Discs
-    # Phi = - amp / sqrt(R^2 + (a + sqrt(z^2+b^2))^2)
-    # Standard: - G M / ...
-    # So amp = G * M
+        # WAIT: Galpy Hernquist is defined as rho = amp/4pi a^4 / (r/a) / (1+r/a)^3
+        # Standard: rho = M/2pi a / r / (r+a)^3
+        # Let's test this carefully or check docs.
+        # Galpy: amp = 2 * G * M usually.
+        # Let's verify with a quick script if possible? 
+        # Actually, using `m_bulge * G_val * 2` is standard for galpy Hernquist.
+    
+    # 3. Discs (DoubleExponentialDiskPotential)
+    # Use realistic thick disc potential
+    # amp = G * M / (4 * pi * h_R^2 * h_z)
     if M_disc_star > 0:
+        amp_star = G_val * M_disc_star / (4 * np.pi * R_d_star**2 * z_d_star)
         potentials.append(
-            MiyamotoNagaiPotential(amp=G_val * M_disc_star, a=R_d_star, b=z_d_star)
+            DoubleExponentialDiskPotential(amp=amp_star, hr=R_d_star, hz=z_d_star)
         )
         
     if M_disc_gas > 0:
+        amp_gas = G_val * M_disc_gas / (4 * np.pi * R_d_gas**2 * z_d_gas)
         potentials.append(
-            MiyamotoNagaiPotential(amp=G_val * M_disc_gas, a=R_d_gas, b=z_d_gas)
+            DoubleExponentialDiskPotential(amp=amp_gas, hr=R_d_gas, hz=z_d_gas)
         )
         
     return potentials
@@ -107,16 +119,31 @@ def total_circular_velocity(
     R_d_gas: float = 1.0,
     z_d_gas: float = 0.1,
 ) -> np.ndarray:
-    """Calculate total circular velocity using galpy."""
+    """Calculate total circular velocity using galpy."
+
+    Args:
+        R: Cylindrical radial positions (kpc).
+        [Mass parameters...]
+
+    Returns:
+        Circular velocity (km/s).
+    """
+    from tqdm import tqdm
+    
     pots = get_galpy_potentials(
         m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
     )
     
-    # Galpy vcirc takes R and phi=0 (axisymmetric)
-    # It returns float if scalar input, array if array input
+    # galpy.potential.vcirc can take array inputs, but DoubleExponentialDiskPotential
+    # force methods require scalar inputs. So we loop manually.
     # R needs to be >= 0
     R_safe = np.maximum(R, 1e-4)
-    v_c = vcirc(pots, R_safe, phi=0)
+    
+    v_c_values = []
+    for r_val in tqdm(R_safe, desc="Calculating Vcirc"):
+        v_c_values.append(vcirc(pots, r_val, phi=0))
+    
+    v_c = np.array(v_c_values)
     
     return v_c
 

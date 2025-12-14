@@ -11,7 +11,6 @@ def write_swift_ic(
     filename: str,
     box_size: float,
     particle_data: dict[str, dict[str, np.ndarray]],
-    m_part: float,
 ) -> None:
     """Write SWIFT-compatible HDF5 initial conditions file.
 
@@ -19,8 +18,7 @@ def write_swift_ic(
         filename: Output HDF5 filename.
         box_size: Simulation box size (kpc).
         particle_data: Dict with keys 'dm', 'gas', 'stars', each containing
-                      'pos' (N,3), 'vel' (N,3) arrays.
-        m_part: Particle mass (Msun).
+                      'pos' (N,3), 'vel' (N,3), 'mass' (N) arrays.
     """
     # Convert to cosmological SWIFT units (Mpc, 1e10 Msun)
     length_conv = 1.0 / 1000.0  # kpc -> Mpc
@@ -72,6 +70,7 @@ def write_swift_ic(
             pos = np.mod(gas_data["pos"], box_size)
             pos = _jitter_duplicates(pos, rng_jitter)
             vel = gas_data["vel"]
+            mass = gas_data["mass"]
 
             # Wrap positions into box
             pos_wrapped = np.mod(pos, box_size)
@@ -80,7 +79,7 @@ def write_swift_ic(
             )
             gas_group.create_dataset("Velocities", data=vel.astype(np.float32))
             gas_group.create_dataset(
-                "Masses", data=np.full(N_gas, m_part * mass_conv, dtype=np.float32)
+                "Masses", data=(mass * mass_conv).astype(np.float32)
             )
             gas_group.create_dataset(
                 "ParticleIDs", data=np.arange(current_id, current_id + N_gas, dtype=np.uint64)
@@ -103,6 +102,7 @@ def write_swift_ic(
             pos = np.mod(dm_data["pos"], box_size)
             pos = _jitter_duplicates(pos, rng_jitter)
             vel = dm_data["vel"]
+            mass = dm_data["mass"]
 
             # Wrap positions into box
             pos_wrapped = np.mod(pos, box_size)
@@ -111,7 +111,7 @@ def write_swift_ic(
             )
             dm_group.create_dataset("Velocities", data=vel.astype(np.float32))
             dm_group.create_dataset(
-                "Masses", data=np.full(N_dm, m_part * mass_conv, dtype=np.float32)
+                "Masses", data=(mass * mass_conv).astype(np.float32)
             )
             dm_group.create_dataset(
                 "ParticleIDs", data=np.arange(current_id, current_id + N_dm, dtype=np.uint64)
@@ -126,6 +126,7 @@ def write_swift_ic(
             pos = np.mod(star_data["pos"], box_size)
             pos = _jitter_duplicates(pos, rng_jitter)
             vel = star_data["vel"]
+            mass = star_data["mass"]
 
             # Wrap positions into box
             pos_wrapped = np.mod(pos, box_size)
@@ -134,7 +135,7 @@ def write_swift_ic(
             )
             star_group.create_dataset("Velocities", data=vel.astype(np.float32))
             star_group.create_dataset(
-                "Masses", data=np.full(N_stars, m_part * mass_conv, dtype=np.float32)
+                "Masses", data=(mass * mass_conv).astype(np.float32)
             )
             star_group.create_dataset(
                 "ParticleIDs", data=np.arange(current_id, current_id + N_stars, dtype=np.uint64)
@@ -238,7 +239,6 @@ def _jitter_duplicates(pos: np.ndarray, rng: np.random.Generator, eps: float = 1
 
 def print_ic_summary(
     particle_data: dict[str, dict[str, np.ndarray]],
-    m_part: float,
     requested_masses: dict[str, float],
     box_size: float,
 ) -> None:
@@ -246,7 +246,6 @@ def print_ic_summary(
 
     Args:
         particle_data: Particle data dict.
-        m_part: Particle mass (Msun).
         requested_masses: Dict of requested masses for each component.
         box_size: Box size (kpc).
     """
@@ -255,7 +254,6 @@ def print_ic_summary(
     print("=" * 70)
 
     print(f"\nBox size: {box_size:.2f} kpc")
-    print(f"Particle mass: {m_part:.2e} Msun")
 
     print("\nParticle counts and masses:")
     print("-" * 70)
@@ -267,7 +265,7 @@ def print_ic_summary(
     for component in ["dm", "gas", "stars"]:
         if component in particle_data and len(particle_data[component].get("pos", [])) > 0:
             N = len(particle_data[component]["pos"])
-            M_achieved = N * m_part
+            M_achieved = np.sum(particle_data[component]["mass"])
             M_requested = requested_masses.get(component, 0.0)
             total_particles += N
 

@@ -2,14 +2,23 @@
 
 import numpy as np
 from galpy.potential import epifreq
+from scipy.integrate import quad
+from tqdm import tqdm
 from .constants import G
 from .potentials import (
     get_galpy_potentials,
-    nfw_potential,
     hernquist_potential,
     miyamoto_nagai_potential,
+    nfw_potential,
 )
-from .profiles import nfw_params
+from .profiles import (
+    exponential_disc_mass,
+    hernquist_density,
+    hernquist_mass,
+    nfw_density,
+    nfw_mass,
+    nfw_params,
+)
 
 
 def epicyclic_frequency(
@@ -34,14 +43,22 @@ def epicyclic_frequency(
     Returns:
         Epicyclic frequency kappa at each radius (km/s/kpc).
     """
+    from tqdm import tqdm
+    
     pots = get_galpy_potentials(
         m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
     )
     
-    # epifreq returns frequency
-    # R must be > 0
+    # galpy.potential.epifreq can take array inputs, but DoubleExponentialDiskPotential
+    # force methods require scalar inputs. So we loop manually.
+    # R needs to be >= 0
     R_safe = np.maximum(R, 1e-4)
-    kappa = epifreq(pots, R_safe)
+    
+    kappa_values = []
+    for r_val in tqdm(R_safe, desc="Calculating kappa"):
+        kappa_values.append(epifreq(pots, r_val))
+    
+    kappa = np.array(kappa_values)
     
     return kappa
 
@@ -108,50 +125,131 @@ def asymmetric_drift_correction(
     Returns:
         Mean azimuthal velocity v_phi (km/s).
     """
-    # Asymmetric drift: v_c^2 - v_phi^2 = sigma_R^2 * (1 - sigma_phi^2/sigma_R^2 - R/sigma_R * d(sigma_R^2)/dR)
-    # Simplified: assume sigma_phi = 0.7 * sigma_R (epicyclic approximation)
-    # and use exponential disc gradient
-
+    # Jeans equation for azimuthal velocity:
+    # v_phi^2 = v_c^2 + sigma_R^2 * (dln(nu)/dlnR + dln(sigma_R^2)/dlnR + 1 - (sigma_phi/sigma_R)^2)
+    
+    # Assume sigma_phi/sigma_R from epicyclic approximation
     sigma_phi = 0.7 * sigma_R
-
-    # Gradient term (analytical for exponential disc)
-    d_sigma_R_sq_dR = -2 * sigma_R**2 / R_d  # Approximate
-
-    # v_c^2 - v_phi^2 = sigma_R^2 * (1 - (sigma_phi/sigma_R)^2 + R/(2*sigma_R^2) * d_sigma_R^2/dR)
-    correction = sigma_R**2 * (
-        1 - (sigma_phi / sigma_R) ** 2 + R / (2 * sigma_R**2) * d_sigma_R_sq_dR
-    )
-    correction = np.maximum(correction, 0.0)
-
-    v_phi_sq = v_c**2 - correction
+    ratio_sq = (sigma_phi / sigma_R)**2
+    
+    # Derivatives for exponential disc
+    # nu ~ exp(-R/R_d) -> dln(nu)/dlnR = -R/R_d
+    # sigma_R^2 ~ exp(-R/R_d) (approximation for constant Q/flat v_c) -> dln(sigma^2)/dlnR = -R/R_d
+    
+    term_density = -R / R_d
+    term_pressure = -R / R_d
+    term_anisotropy = 1.0 - ratio_sq
+    
+    bracket = term_density + term_pressure + term_anisotropy
+    
+    v_phi_sq = v_c**2 + sigma_R**2 * bracket
     v_phi_sq = np.maximum(v_phi_sq, 0.0)
 
     return np.sqrt(v_phi_sq)
 
 
 def jeans_dispersion_spherical(
-    r: np.ndarray, m_enc: np.ndarray, rho: np.ndarray, beta: float = 0.0
+    r_coords: np.ndarray, # These are the particle radii to evaluate sigma at
+    profile_type: str, # "nfw" or "hernquist"
+    m200: float,
+    c200: float,
+    m_bulge: float,
+    a_bulge: float,
+    M_disc_star: float,
+    R_d_star: float,
+    z_d_star: float,
+    M_disc_gas: float = 0.0,
+    R_d_gas: float = 1.0,
+    z_d_gas: float = 0.1,
+    beta: float = 0.0,
 ) -> np.ndarray:
     """Calculate velocity dispersion from spherical Jeans equation.
 
+    Solves the integral: sigma_r^2(r) = (1/rho_comp(r)) * integral_r^infty rho_comp(r') dPhi/dr' dr'
+
     Args:
-        r: Radial positions (kpc).
-        m_enc: Enclosed mass at each radius (Msun).
-        rho: Density at each radius (Msun/kpc^3).
-        beta: Anisotropy parameter (0 = isotropic, 0.5 = radial).
+        r_coords: Radial positions (kpc) of particles.
+        profile_type: Type of component ('nfw' or 'hernquist').
+        [All galaxy mass parameters...]
+        beta: Anisotropy parameter (0 = isotropic).
 
     Returns:
         Radial velocity dispersion sigma_r (km/s).
     """
-    # sigma_r^2 = (1/rho) * integral_r^infty (rho * G * M(<r') / r'^2 * dr')
-    # Simplified: assume constant beta and use local approximation
+    from scipy.integrate import quad
+    from tqdm import tqdm
+    from .constants import G
+    from .profiles import (
+        exponential_disc_mass,
+        hernquist_density,
+        hernquist_mass,
+        nfw_density,
+        nfw_mass,
+        nfw_params,
+    )
 
-    # For isotropic case and power-law profiles, approximate as:
-    # Avoid division by zero at r=0
-    r_safe = np.maximum(r, 1e-4)
-    sigma_r_sq = G.value * m_enc / (2 * r_safe) * (1 - beta)
+    G_val = G.value
+    sigma_r_sq = np.zeros_like(r_coords)
+
+    # Calculate NFW halo parameters once for scope
+    r_s_nfw, delta_c_nfw = nfw_params(m200, c200)
+
+    # Define helper functions for density and total enclosed mass
+    # These must be passed to the integrand or accessed from closure
+    
+    # Total enclosed mass (used for dPhi/dr')
+    def total_enclosed_mass_func(r_prime):
+        m_halo = nfw_mass(r_prime, m200, c200, r_s_nfw)
+        
+        m_b = 0.0
+        if m_bulge > 0:
+            m_b = hernquist_mass(r_prime, m_bulge, a_bulge)
+        
+        m_ds = 0.0
+        if M_disc_star > 0:
+            m_ds = exponential_disc_mass(r_prime, M_disc_star, R_d_star)
+            
+        m_dg = 0.0
+        if M_disc_gas > 0:
+            m_dg = exponential_disc_mass(r_prime, M_disc_gas, R_d_gas)
+            
+        return m_halo + m_b + m_ds + m_dg
+
+    # Component density (used for rho_comp(r) and rho_comp(r'))
+    def component_density_func(r_prime, comp_type):
+        if comp_type == "nfw":
+            r_s_nfw, delta_c_nfw = nfw_params(m200, c200)
+            return nfw_density(r_prime, m200, c200, delta_c_nfw, r_s_nfw)
+        elif comp_type == "hernquist":
+            return hernquist_density(r_prime, m_bulge, a_bulge)
+        else:
+            raise ValueError("Unknown profile type for Jeans solver")
+
+    # Integrand function: rho_comp(r') * G * M_total(r') / r'^2
+    def integrand(r_prime, comp_type):
+        # Handle r_prime = 0 for numerical stability
+        r_prime_safe = np.maximum(r_prime, 1e-4)
+        return component_density_func(r_prime_safe, comp_type) * G_val * total_enclosed_mass_func(r_prime_safe) / r_prime_safe**2
+
+    # Loop over each radial coordinate for the particles
+    for i, r_val in enumerate(tqdm(r_coords, desc=f"Solving Jeans for {profile_type}")):
+        # Ensure r_val is not too small for initial rho_comp(r_val) evaluation
+        r_safe = np.maximum(r_val, 1e-4)
+        
+        # Denominator: component density at current radius
+        rho_comp_r = component_density_func(r_safe, profile_type)
+        
+        # Integrate from r to infinity
+        # Use a large upper bound for infinity (e.g., 1000 kpc or 10*R200)
+        # Assuming r_max is max extent of halo/bulge
+        r_max_integration = max(200.0, r_s_nfw * 10) # Roughly 2*R200 of halo
+        
+        integral_val, _ = quad(integrand, r_safe, r_max_integration, args=(profile_type,))
+        
+        # Apply the (1 - beta) term and divide by density
+        sigma_r_sq[i] = (1.0 - beta) * integral_val / rho_comp_r
+
     sigma_r_sq = np.maximum(sigma_r_sq, 0.0)
-
     return np.sqrt(sigma_r_sq)
 
 

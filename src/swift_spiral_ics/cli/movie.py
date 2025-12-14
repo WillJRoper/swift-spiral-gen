@@ -21,6 +21,7 @@ def render_snapshot(
     bins: int = 512,
     show_vel: bool = False,
     vel_subsample: int = 500,
+    render_component: str = "combined",
 ) -> np.ndarray:
     """Render snapshot to image using swiftsimio.
 
@@ -29,6 +30,7 @@ def render_snapshot(
         bins: Number of bins for density projection.
         show_vel: If True, overlay velocity vectors.
         vel_subsample: Number of particles to show for velocity field.
+        render_component: Which component to render ('gas', 'stars', 'dm', or 'combined').
 
     Returns:
         RGB image array (H, W, 3).
@@ -37,38 +39,45 @@ def render_snapshot(
     box_size_unyt = data.metadata.boxsize[0].to("kpc")
     box_size = box_size_unyt.value
 
-    # Project gas mass density
-    # swiftsimio projects mass by default if 'project' is 'masses'
-    # but project_pixel_grid takes specific data.
-    # We want surface density: sum(mass) / area
-    
-    # Initialize combined density map
+    # Project density map
     combined_density = np.zeros((bins, bins))
     
-    # Define grid with units to avoid cosmology confusion
-    region = [0 * unyt.kpc, box_size_unyt, 0 * unyt.kpc, box_size_unyt]
+    # Define grid with units
+    region = [0 * unyt.kpc, box_size_unyt, 0 * unyt.kpc, box_size_unyt] 
+    
+    if render_component == "gas" or render_component == "combined":
+        if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
+            gas_map = project_pixel_grid(
+                data=data.gas,
+                resolution=bins,
+                project="masses",
+                parallel=True,
+                region=region
+            )
+            combined_density += gas_map.value * 1.0 # Weight 1.0
 
-    # Gas
-    if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
-        gas_map = project_pixel_grid(
-            data=data.gas,
-            resolution=bins,
-            project="masses",
-            parallel=True,
-            region=region
-        )
-        combined_density += gas_map.value * 1.0 # Weight 1.0
+    if render_component == "stars" or render_component == "combined":
+        if hasattr(data, "stars") and len(data.stars.coordinates) > 0:
+            star_map = project_pixel_grid(
+                data=data.stars,
+                resolution=bins,
+                project="masses",
+                parallel=True,
+                region=region
+            )
+            combined_density += star_map.value * 0.5 # Weight 0.5
 
-    # Stars
-    if hasattr(data, "stars") and len(data.stars.coordinates) > 0:
-        star_map = project_pixel_grid(
-            data=data.stars,
-            resolution=bins,
-            project="masses",
-            parallel=True,
-            region=region
-        )
-        combined_density += star_map.value * 0.5 # Weight 0.5
+    if render_component == "dm" or render_component == "combined":
+        if hasattr(data, "dm") and len(data.dm.coordinates) > 0:
+            dm_map = project_pixel_grid(
+                data=data.dm,
+                resolution=bins,
+                project="masses",
+                parallel=True,
+                region=region
+            )
+            combined_density += dm_map.value * 0.1 # Lower weight for DM as it's typically more diffuse
+
 
     # Plot density
     extent = [0, box_size, 0, box_size]
@@ -85,7 +94,7 @@ def render_snapshot(
         aspect="equal",
     )
 
-    # Overlay velocity field if requested
+    # Overlay velocity field if requested (only for gas)
     if show_vel and hasattr(data, "gas") and hasattr(data.gas, "velocities"):
         pos = data.gas.coordinates.to("kpc").value
         vel = data.gas.velocities.to("km/s").value
@@ -98,7 +107,7 @@ def render_snapshot(
         x, y = pos[:, 0], pos[:, 1]
         vx, vy = vel[:, 0], vel[:, 1]
 
-        # Only plot vectors inside the box (handling periodic wrap visually is hard, just clip)
+        # Only plot vectors inside the box
         mask = (x >= 0) & (x <= box_size) & (y >= 0) & (y <= box_size)
         
         ax.quiver(
@@ -106,12 +115,12 @@ def render_snapshot(
             color="white", alpha=0.3, scale=1000, width=0.002
         )
 
-    # Add time label
+    # Add time label and component label
     time_gyr = data.metadata.time.to("Gyr").value
     ax.text(
         0.05,
         0.95,
-        f"t = {time_gyr:.2f} Gyr",
+        f"t = {time_gyr:.2f} Gyr ({render_component.upper()})",
         transform=ax.transAxes,
         fontsize=14,
         color="white",
@@ -128,9 +137,6 @@ def render_snapshot(
 
     # Convert to image array
     fig.canvas.draw()
-    # Use tostring_argb for modern matplotlib, check channel order
-    # ARGB -> RGBA conversion might be needed if using tostring_argb
-    # Actually, try 'buffer_rgba' which is standard in newer mpl
     try:
         img = np.asarray(fig.canvas.buffer_rgba())
     except AttributeError:
@@ -224,6 +230,9 @@ def main():
     parser.add_argument(
         "--vel-subsample", type=int, default=500, help="Number of particles for velocity field"
     )
+    parser.add_argument(
+        "--separate-movies", action="store_true", help="Create separate movies for gas, stars, and combined"
+    )
 
     args = parser.parse_args()
     
@@ -246,28 +255,46 @@ def main():
     print(f"First: {snapshot_files[0]}")
     print(f"Last: {snapshot_files[-1]}")
 
+    components_to_render = ["gas", "stars"]
+    if args.separate_movies:
+        components_to_render.append("dm") # DM also
+
     # Render frames
-    print("\nRendering frames...")
-    frames = []
+    movies_to_create = {}
+    if args.separate_movies:
+        for comp in components_to_render:
+            movies_to_create[comp] = []
+        movies_to_create["combined"] = [] # Still do combined if separate is requested
+    else:
+        movies_to_create["combined"] = []
 
-    for snap_file in tqdm(snapshot_files, desc="Rendering"):
+    for snap_file in tqdm(snapshot_files, desc="Loading and Rendering Snapshots"):
         data = swiftsimio.load(str(snap_file))
-        img = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample)
-        frames.append(img)
+        
+        if args.separate_movies:
+            for comp in components_to_render:
+                img = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample, render_component=comp)
+                movies_to_create[comp].append(img)
+            # Also render combined
+            img_combined = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample, render_component="combined")
+            movies_to_create["combined"].append(img_combined)
+        else:
+            img_combined = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample, render_component="combined")
+            movies_to_create["combined"].append(img_combined)
 
-    if not frames:
-        print("No frames rendered.")
-        sys.exit(1)
-
-    # Create movie
-    print(f"\nCreating movie: {args.out_movie}")
-    create_movie_ffmpeg(frames, args.out_movie, args.fps)
+    for comp, frames_list in movies_to_create.items():
+        if not frames_list:
+            print(f"No frames rendered for {comp}.")
+            continue
+        
+        output_filename = Path(args.out_movie).parent / f"{Path(args.out_movie).stem}_{comp}.mp4"
+        print(f"\nCreating movie for {comp}: {output_filename}")
+        create_movie_ffmpeg(frames_list, str(output_filename), args.fps)
 
     print("\n" + "=" * 70)
     print("MOVIE CREATION COMPLETE")
     print("=" * 70)
-    print(f"\nOutput: {args.out_movie}")
-    print(f"Duration: {len(frames) / args.fps:.1f} seconds ({len(frames)} frames @ {args.fps} fps)")
+    print(f"\nDuration: {len(list(movies_to_create.values())[0]) / args.fps:.1f} seconds ({len(list(movies_to_create.values())[0])} frames @ {args.fps} fps)")
 
 
 if __name__ == "__main__":

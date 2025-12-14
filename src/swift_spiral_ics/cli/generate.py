@@ -503,14 +503,17 @@ def generate_galaxy(
         "dm": {
             "pos": np.column_stack([x_dm, y_dm, z_dm]),
             "vel": np.column_stack([vx_dm, vy_dm, vz_dm]),
+            "mass": np.full(N_dm, args.m_part_msun),
         },
         "gas": {
             "pos": np.column_stack([x_gas, y_gas, z_gas]),
             "vel": np.column_stack([vx_gas, vy_gas, vz_gas]),
+            "mass": np.full(N_gas, args.m_part_msun),
         },
         "stars": {
             "pos": np.column_stack([x_star, y_star, z_star]),
             "vel": np.column_stack([vx_star, vy_star, vz_star]),
+            "mass": np.full(len(x_star), args.m_part_msun),
         },
     }
 
@@ -530,64 +533,96 @@ def add_uniform_background(
     volume = box_size**3
     updated = dict(combined_data)
 
-    if rho_dm > 0:
-        n_dm = int(round(rho_dm * volume / m_part))
-        if n_dm > 0:
-            pos_dm = rng.uniform(0, box_size, (n_dm, 3))
-            vel_dm = np.zeros((n_dm, 3), dtype=float)
-            if updated["dm"]["pos"].size == 0:
-                updated["dm"]["pos"] = pos_dm
-                updated["dm"]["vel"] = vel_dm
-            else:
-                updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], pos_dm])
-                updated["dm"]["vel"] = np.vstack([updated["dm"]["vel"], vel_dm])
-            print(f"  Added uniform DM background: N={n_dm}, rho={rho_dm:.3e} Msun/kpc^3")
+    # 1. Random Background (using fixed m_part)
+    # Only if density is set but grid is NOT (or we add on top?)
+    # Current logic: add random if rho > 0.
+    # New logic: If grid_spacing > 0, we assume the user wants the density to be satisfied by the grid.
+    # So we should ONLY do random sampling if grid_spacing == 0.
+    
+    use_grid = grid_spacing > 0
 
-    if rho_gas > 0:
-        n_gas = int(round(rho_gas * volume / m_part))
-        if n_gas > 0:
-            pos_gas = rng.uniform(0, box_size, (n_gas, 3))
-            vel_gas = np.zeros((n_gas, 3), dtype=float)
-            if updated["gas"]["pos"].size == 0:
-                updated["gas"]["pos"] = pos_gas
-                updated["gas"]["vel"] = vel_gas
-            else:
-                updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], pos_gas])
-                updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
-            print(f"  Added uniform gas background: N={n_gas}, rho={rho_gas:.3e} Msun/kpc^3")
+    if not use_grid:
+        if rho_dm > 0:
+            n_dm = int(round(rho_dm * volume / m_part))
+            if n_dm > 0:
+                pos_dm = rng.uniform(0, box_size, (n_dm, 3))
+                vel_dm = np.zeros((n_dm, 3), dtype=float)
+                mass_dm = np.full(n_dm, m_part)
+                
+                if updated["dm"]["pos"].size == 0:
+                    updated["dm"]["pos"] = pos_dm
+                    updated["dm"]["vel"] = vel_dm
+                    updated["dm"]["mass"] = mass_dm
+                else:
+                    updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], pos_dm])
+                    updated["dm"]["vel"] = np.vstack([updated["dm"]["vel"], vel_dm])
+                    updated["dm"]["mass"] = np.concatenate([updated["dm"]["mass"], mass_dm])
+                print(f"  Added uniform DM background (random): N={n_dm}, rho={rho_dm:.3e} Msun/kpc^3")
 
-    # Optional regular grid background for both gas and DM
-    if grid_spacing > 0:
+        if rho_gas > 0:
+            n_gas = int(round(rho_gas * volume / m_part))
+            if n_gas > 0:
+                pos_gas = rng.uniform(0, box_size, (n_gas, 3))
+                vel_gas = np.zeros((n_gas, 3), dtype=float)
+                mass_gas = np.full(n_gas, m_part)
+                
+                if updated["gas"]["pos"].size == 0:
+                    updated["gas"]["pos"] = pos_gas
+                    updated["gas"]["vel"] = vel_gas
+                    updated["gas"]["mass"] = mass_gas
+                else:
+                    updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], pos_gas])
+                    updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
+                    updated["gas"]["mass"] = np.concatenate([updated["gas"]["mass"], mass_gas])
+                print(f"  Added uniform gas background (random): N={n_gas}, rho={rho_gas:.3e} Msun/kpc^3")
+
+    # 2. Grid Background (variable mass)
+    else:
         coords_1d = np.arange(0, box_size, grid_spacing)
         if coords_1d.size > 0:
             gx, gy, gz = np.meshgrid(coords_1d, coords_1d, coords_1d, indexing="ij")
             grid_positions = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
-            # Add small random jitter to avoid perfectly aligned cells; use independent jitter per component
+            n_grid = len(grid_positions)
+            
+            # Add small random jitter
             jitter_gas = rng.normal(scale=0.1 * grid_spacing, size=grid_positions.shape)
             jitter_dm = rng.normal(scale=0.1 * grid_spacing, size=grid_positions.shape)
             gas_grid = np.mod(grid_positions + jitter_gas, box_size)
             dm_grid = np.mod(grid_positions + jitter_dm, box_size)
-            if grid_positions.size > 0:
+            
+            # Calculate mass per particle to match target density
+            # M_tot = rho * V
+            # m_bg = M_tot / N_grid
+            
+            if rho_gas > 0:
+                m_gas_bg = (rho_gas * volume) / n_grid
+                vel_gas = np.zeros((n_grid, 3), dtype=float)
+                mass_gas = np.full(n_grid, m_gas_bg)
+                
                 if updated["gas"]["pos"].size == 0:
                     updated["gas"]["pos"] = gas_grid.copy()
-                    updated["gas"]["vel"] = np.zeros_like(gas_grid)
+                    updated["gas"]["vel"] = vel_gas
+                    updated["gas"]["mass"] = mass_gas
                 else:
                     updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], gas_grid])
-                    updated["gas"]["vel"] = np.vstack(
-                        [updated["gas"]["vel"], np.zeros_like(gas_grid)]
-                    )
+                    updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
+                    updated["gas"]["mass"] = np.concatenate([updated["gas"]["mass"], mass_gas])
+                print(f"  Added grid gas background: spacing={grid_spacing} kpc, N={n_grid}, m={m_gas_bg:.2e} Msun")
 
+            if rho_dm > 0:
+                m_dm_bg = (rho_dm * volume) / n_grid
+                vel_dm = np.zeros((n_grid, 3), dtype=float)
+                mass_dm = np.full(n_grid, m_dm_bg)
+                
                 if updated["dm"]["pos"].size == 0:
                     updated["dm"]["pos"] = dm_grid.copy()
-                    updated["dm"]["vel"] = np.zeros_like(dm_grid)
+                    updated["dm"]["vel"] = vel_dm
+                    updated["dm"]["mass"] = mass_dm
                 else:
                     updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], dm_grid])
-                    updated["dm"]["vel"] = np.vstack(
-                        [updated["dm"]["vel"], np.zeros_like(dm_grid)]
-                    )
-                print(
-                    f"  Added grid background: spacing={grid_spacing} kpc, N={len(grid_positions)} per component"
-                )
+                    updated["dm"]["vel"] = np.vstack([updated["dm"]["vel"], vel_dm])
+                    updated["dm"]["mass"] = np.concatenate([updated["dm"]["mass"], mass_dm])
+                print(f"  Added grid DM background: spacing={grid_spacing} kpc, N={n_grid}, m={m_dm_bg:.2e} Msun")
 
     return updated
 
@@ -680,7 +715,7 @@ def main():
             for comp_name in ["dm", "gas", "stars"]:
                 if len(galaxy[comp_name]["pos"]) > 0:
                     N = len(galaxy[comp_name]["pos"])
-                    all_masses.append(np.full(N, args.m_part_msun))
+                    all_masses.append(galaxy[comp_name]["mass"])
                     all_positions.append(tuple(galaxy[comp_name]["pos"].T))
                     all_velocities.append(tuple(galaxy[comp_name]["vel"].T))
 
@@ -705,9 +740,9 @@ def main():
     print("=" * 70)
 
     combined_data = {
-        "dm": {"pos": [], "vel": []},
-        "gas": {"pos": [], "vel": []},
-        "stars": {"pos": [], "vel": []},
+        "dm": {"pos": [], "vel": [], "mass": []},
+        "gas": {"pos": [], "vel": [], "mass": []},
+        "stars": {"pos": [], "vel": [], "mass": []},
     }
 
     for galaxy in galaxies:
@@ -715,14 +750,17 @@ def main():
             if len(galaxy[comp_name]["pos"]) > 0:
                 combined_data[comp_name]["pos"].append(galaxy[comp_name]["pos"])
                 combined_data[comp_name]["vel"].append(galaxy[comp_name]["vel"])
+                combined_data[comp_name]["mass"].append(galaxy[comp_name]["mass"])
 
     for comp_name in ["dm", "gas", "stars"]:
         if combined_data[comp_name]["pos"]:
             combined_data[comp_name]["pos"] = np.vstack(combined_data[comp_name]["pos"])
             combined_data[comp_name]["vel"] = np.vstack(combined_data[comp_name]["vel"])
+            combined_data[comp_name]["mass"] = np.concatenate(combined_data[comp_name]["mass"])
         else:
             combined_data[comp_name]["pos"] = np.array([]).reshape(0, 3)
             combined_data[comp_name]["vel"] = np.array([]).reshape(0, 3)
+            combined_data[comp_name]["mass"] = np.array([])
 
     # Center in box
     print("\nCentering in simulation box...")
@@ -754,9 +792,9 @@ def main():
         "stars": sum(args.m_star_msun),
     }
 
-    write_swift_ic(args.out_ics, args.box_kpc, combined_data, args.m_part_msun)
+    write_swift_ic(args.out_ics, args.box_kpc, combined_data)
 
-    print_ic_summary(combined_data, args.m_part_msun, requested_masses, args.box_kpc)
+    print_ic_summary(combined_data, requested_masses, args.box_kpc)
 
     # Write YAML parameter file
     print(f"Writing YAML parameter file: {args.out_params}")
