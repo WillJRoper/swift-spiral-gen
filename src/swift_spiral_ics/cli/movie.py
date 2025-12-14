@@ -68,9 +68,9 @@ def render_snapshot(
             combined_density += star_map.value * 0.5 # Weight 0.5
 
     if render_component == "dm" or render_component == "combined":
-        if hasattr(data, "dm") and len(data.dm.coordinates) > 0:
+        if hasattr(data, "dark_matter") and len(data.dark_matter.coordinates) > 0:
             dm_map = project_pixel_grid(
-                data=data.dm,
+                data=data.dark_matter,
                 resolution=bins,
                 project="masses",
                 parallel=True,
@@ -271,8 +271,8 @@ def main():
         data = swiftsimio.load(str(snap_file))
         
         # Debugging: check if DM data is loaded
-        if hasattr(data, "dm") and hasattr(data.dm, "coordinates"):
-            print(f"  Loaded DM particles: {len(data.dm.coordinates)} (total mass: {np.sum(data.dm.masses).to('Msun'):.2e})")
+        if hasattr(data, "dark_matter") and hasattr(data.dark_matter, "coordinates"):
+            print(f"  Loaded DM particles: {len(data.dark_matter.coordinates)} (total mass: {np.sum(data.dark_matter.masses).to('Msun'):.2e})")
         else:
             print("  No DM particles found in swiftsimio data object.")
         

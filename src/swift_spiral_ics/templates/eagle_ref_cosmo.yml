@@ -48,10 +48,10 @@ Gravity:
   theta_cr:                    0.7       # Opening angle (Multipole acceptance criterion)
   epsilon_fmm:                 0.001     # Adaptive opening angle
   mesh_side_length:            512
-  comoving_DM_softening:         0.003320 # Comoving softening for DM (3.32 ckpc)
-  max_physical_DM_softening:     0.001300 # Physical softening for DM (1.30 pkpc)
-  comoving_baryon_softening:     0.001790 # Comoving softening for baryons (1.79 ckpc)
-  max_physical_baryon_softening: 0.000700 # Physical softening for baryons (0.70 pkpc)
+  comoving_DM_softening: __SOFTENING__ # Comoving softening for DM (3.32 ckpc)
+  max_physical_DM_softening: __SOFTENING__ # Physical softening for DM (1.30 pkpc)
+  comoving_baryon_softening: __SOFTENING__ # Comoving softening for baryons (1.79 ckpc)
+  max_physical_baryon_softening: __SOFTENING__ # Physical softening for baryons (0.70 pkpc)
 
 # Parameters for the hydrodynamics scheme
 SPH:

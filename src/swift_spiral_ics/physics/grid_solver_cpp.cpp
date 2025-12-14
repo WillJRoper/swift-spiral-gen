@@ -1,52 +1,59 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
-#include <pybind11/stl.h>
-
-#include <cmath>
+#include <pybind11/stl.h> // For std::vector, std::string
+#include <cmath>          // For std::sqrt, std::max, std::min
 #include <vector>
-#include <iostream> // For debugging
+#include <algorithm>      // For std::lower_bound
+#include <stdexcept>      // For std::runtime_error
 
-// Define the gravitational constant (km/s)^2 kpc / Msun
-// This should be consistent with physics/constants.py G.value
+// Define constants
 const double G_val = 4.300788457221135e-06; 
+const double PI = 3.14159265358979323846;
 
 namespace py = pybind11;
 
+// Arithmetic-Geometric Mean for Elliptic Integral
+double agm(double a, double b) {
+    const double tol = 1e-9;
+    while (std::abs(a - b) > tol) {
+        double a_next = 0.5 * (a + b);
+        double b_next = std::sqrt(a * b);
+        a = a_next;
+        b = b_next;
+    }
+    return a;
+}
+
+// Complete Elliptic Integral of the First Kind K(k)
+double my_ellipk(double k) {
+    // K(k) = pi / (2 * agm(1, sqrt(1 - k^2)))
+    if (k >= 1.0) return 1e10; // Large number for singularity
+    return PI / (2.0 * agm(1.0, std::sqrt(1.0 - k * k)));
+}
+
 // Function to compute potential of a single ring at (R_src, z_src) at a point (R_dest, z_dest)
 double potential_of_ring(double M_ring, double R_src, double z_src, double R_dest, double z_dest, double eps) {
-    // Elliptic integral formula for potential of a ring
-    // Phi = -G * M / (pi * sqrt( (R_src+R_dest)^2 + (z_src-z_dest)^2 )) * K(k)
-    // Where k^2 = (4 * R_src * R_dest) / ( (R_src+R_dest)^2 + (z_src-z_dest)^2 )
-    // Softening eps is added to denominator to avoid singularity
-
     double term1 = (R_src + R_dest);
     double term2 = (z_src - z_dest);
     double A_sq = term1 * term1 + term2 * term2 + eps * eps;
 
     double k_sq_numerator = 4 * R_src * R_dest;
-    double k_sq_denominator = A_sq; // This is the (R_src+R_dest)^2 + (z_src-z_dest)^2 + eps^2
-    
     double k_sq = 0.0;
-    if (k_sq_denominator > 0) { // Avoid division by zero
-        k_sq = k_sq_numerator / k_sq_denominator;
+    if (A_sq > 0) {
+        k_sq = k_sq_numerator / A_sq;
     }
     
-    // Ensure k^2 is within [0, 1] for ellipk
-    k_sq = std::max(0.0, std::min(1.0 - 1e-12, k_sq)); // Clip to prevent issues with 1.0
+    // Clip k_sq
+    k_sq = std::max(0.0, std::min(1.0 - 1e-9, k_sq));
 
-    if (A_sq <= 0 || k_sq_denominator == 0 || k_sq == 0) {
-        // Handle point mass potential for R_src=0 or R_dest=0 or very far points
-        double dist_sq = (R_src - R_dest) * (R_src - R_dest) + term2 * term2 + eps * eps;
-        if (dist_sq > 0) {
-            return -G_val * M_ring / std::sqrt(dist_sq);
-        } else {
-            return 0.0; // Avoid singularity if dist_sq is 0
-        }
+    if (k_sq == 0) {
+        // Point mass limit (on axis)
+        return -G_val * M_ring / std::sqrt(A_sq);
     }
 
-    double K_val = std::comp_ellint_1(std::sqrt(k_sq)); // K(k) = comp_ellint_1(sqrt(k^2))
+    double K_val = my_ellipk(std::sqrt(k_sq));
 
-    return -G_val * M_ring / (M_PI * std::sqrt(A_sq)) * K_val;
+    return -G_val * M_ring / (PI * std::sqrt(A_sq)) * K_val;
 }
 
 
@@ -70,16 +77,14 @@ public:
         if (buf_R.ndim != 1 || buf_z.ndim != 1)
             throw std::runtime_error("Grid arrays must be 1-dimensional!");
 
-        nR_ = buf_R.shape[0];
-        nz_ = buf_z.shape[0];
+        nR_ = static_cast<size_t>(buf_R.shape[0]);
+        nz_ = static_cast<size_t>(buf_z.shape[0]);
 
-        R_grid_ = std::vector<double>(buf_R.ptr, buf_R.ptr + nR_);
-        z_grid_ = std::vector<double>(buf_z.ptr, buf_z.ptr + nz_);
+        R_grid_ = std::vector<double>(static_cast<double*>(buf_R.ptr), static_cast<double*>(buf_R.ptr) + nR_);
+        z_grid_ = std::vector<double>(static_cast<double*>(buf_z.ptr), static_cast<double*>(buf_z.ptr) + nz_);
 
-        rho_grid_ = py::array_t<double>({nR_, nz_});
-        Phi_grid_ = py::array_t<double>({nR_, nz_});
-        FR_grid_ = py::array_t<double>({nR_, nz_});
-        FZ_grid_ = py::array_t<double>({nR_, nz_});
+        rho_grid_ = py::array_t<double>({static_cast<ssize_t>(nR_), static_cast<ssize_t>(nz_)});
+        Phi_grid_ = py::array_t<double>({static_cast<ssize_t>(nR_), static_cast<ssize_t>(nz_)});
     }
 
     // Bin particles to grid
@@ -94,22 +99,15 @@ public:
         std::vector<double> z_all;
         std::vector<double> mass_all;
 
+        // Iterate through component dicts
         for (auto item : all_pos_dict) {
-            std::string comp_name = item.first.cast<std::string>();
             py::array_t<double> pos_py = item.second.cast<py::array_t<double>>();
             py::array_t<double> mass_py = all_mass_dict[item.first].cast<py::array_t<double>>();
 
             py::buffer_info buf_pos = pos_py.request();
             py::buffer_info buf_mass = mass_py.request();
 
-            if (buf_pos.ndim != 2 || buf_pos.shape[1] != 3)
-                throw std::runtime_error("Position arrays must be (N,3) dimensional!");
-            if (buf_mass.ndim != 1)
-                throw std::runtime_error("Mass arrays must be 1-dimensional!");
-            if (buf_pos.shape[0] != buf_mass.shape[0])
-                throw std::runtime_error("Position and mass arrays must have same N!");
-
-            size_t n_particles = buf_pos.shape[0];
+            size_t n_particles = static_cast<size_t>(buf_pos.shape[0]);
             const double* pos_ptr = static_cast<double*>(buf_pos.ptr);
             const double* mass_ptr = static_cast<double*>(buf_mass.ptr);
 
@@ -125,49 +123,74 @@ public:
 
         if (r_all.empty()) return;
 
-        // Manual binning for now. Can be optimized.
-        // We will sum mass into cells and then divide by volume
+        // Manual binning: Sum mass into cells and then divide by volume
         std::vector<std::vector<double>> mass_in_bins(nR_, std::vector<double>(nz_, 0.0));
-        std::vector<std::vector<double>> volume_elements(nR_, std::vector<double>(nz_, 0.0)); // To store actual volume of bins
 
         for (size_t p_idx = 0; p_idx < r_all.size(); ++p_idx) {
             double R_val = r_all[p_idx];
             double z_val = z_all[p_idx];
             double m_val = mass_all[p_idx];
 
-            // Find bin for R
-            size_t iR = 0;
-            while (iR < nR_ - 1 && R_val >= R_grid_[iR + 1]) {
-                iR++;
-            }
-            if (iR == nR_ -1 && R_val > R_grid_[nR_ -1]) iR = nR_-1; // Handle edge case for R_grid max
-
-            // Find bin for z
-            size_t iz = 0;
-            while (iz < nz_ - 1 && z_val >= z_grid_[iz + 1]) {
-                iz++;
-            }
-             if (iz == nz_ -1 && z_val > z_grid_[nz_ -1]) iz = nz_-1; // Handle edge case for z_grid max
+            // Find bin for R (nearest neighbor logic for binning)
+            // Assuming R_grid is sorted. Using lower_bound to find index.
+            // Note: R_grid are points. We bin based on proximity? Or assuming R_grid are bin edges?
+            // The logic "R_center = R_grid[i]" suggests R_grid are centers.
+            // Let's assume R_grid defines the grid points and we assign to the nearest.
             
-            // Check if within bounds
-            if (R_val >= R_grid_[0] && R_val < R_grid_[nR_ - 1] &&
-                z_val >= z_grid_[0] && z_val < z_grid_[nz_ - 1]) {
-                 mass_in_bins[iR][iz] += m_val;
+            size_t iR = 0;
+            if (R_val >= R_grid_[0]) {
+                auto it = std::lower_bound(R_grid_.begin(), R_grid_.end(), R_val);
+                iR = static_cast<size_t>(it - R_grid_.begin());
+                if (iR == nR_) iR--; 
+                // Check if previous point is closer
+                if (iR > 0 && (R_val - R_grid_[iR-1] < R_grid_[iR] - R_val)) {
+                    iR--;
+                }
+            }
+            
+            size_t iz = 0;
+            if (z_val >= z_grid_[0]) {
+                auto it = std::lower_bound(z_grid_.begin(), z_grid_.end(), z_val);
+                iz = static_cast<size_t>(it - z_grid_.begin());
+                if (iz == nz_) iz--;
+                if (iz > 0 && (z_val - z_grid_[iz-1] < z_grid_[iz] - z_val)) {
+                    iz--;
+                }
+            }
+            
+            // Check limits again
+            if (iR < nR_ && iz < nz_) {
+                mass_in_bins[iR][iz] += m_val;
             }
         }
         
         // Convert mass_in_bins to rho_grid
         for (size_t i = 0; i < nR_; ++i) {
             double R_center = R_grid_[i];
-            double dR_bin = (i < nR_ - 1) ? (R_grid_[i+1] - R_grid_[i]) : ((i > 0) ? (R_grid_[i] - R_grid_[i-1]) : 0.0);
-            if (dR_bin == 0.0 && nR_ > 1) dR_bin = (R_grid_[nR_-1] - R_grid_[0]) / (nR_-1); // Fallback for single bin
             
-            for (size_t j = 0; j < nz_; ++j) {
-                double dZ_bin = (j < nz_ - 1) ? (z_grid_[j+1] - z_grid_[j]) : ((j > 0) ? (z_grid_[j] - z_grid_[j-1]) : 0.0);
-                if (dZ_bin == 0.0 && nz_ > 1) dZ_bin = (z_grid_[nz_-1] - z_grid_[0]) / (nz_-1); // Fallback for single bin
+            // Estimate bin width
+            double dR_bin_actual = 0.0;
+            if (i < nR_ - 1) dR_bin_actual = R_grid_[i+1] - R_grid_[i];
+            else if (i > 0) dR_bin_actual = R_grid_[i] - R_grid_[i-1];
+            if (nR_ == 1) dR_bin_actual = 1.0; // dummy
 
-                if (R_center > 0 && dR_bin > 0 && dZ_bin > 0) {
-                    double volume = 2 * M_PI * R_center * dR_bin * dZ_bin;
+            for (size_t j = 0; j < nz_; ++j) {
+                double dZ_bin_actual = 0.0;
+                if (j < nz_ - 1) dZ_bin_actual = z_grid_[j+1] - z_grid_[j];
+                else if (j > 0) dZ_bin_actual = z_grid_[j] - z_grid_[j-1];
+                if (nz_ == 1) dZ_bin_actual = 1.0;
+
+                if (dR_bin_actual > 0 && dZ_bin_actual > 0) {
+                    double volume;
+                    if (R_center == 0.0) {
+                        // Central cylinder volume: pi * (dR/2)^2 * h
+                        double r_cyl = dR_bin_actual / 2.0;
+                        volume = PI * r_cyl * r_cyl * dZ_bin_actual;
+                    } else {
+                        // Annulus volume: 2 * pi * R * dR * h
+                        volume = 2 * PI * R_center * dR_bin_actual * dZ_bin_actual;
+                    }
+                    
                     if (volume > 0) {
                          rho_grid_rw[i * nz_ + j] = mass_in_bins[i][j] / volume;
                     }
@@ -181,29 +204,36 @@ public:
         auto Phi_grid_rw = Phi_grid_.mutable_data();
         auto rho_grid_r = rho_grid_.data();
 
-        std::fill(Phi_grid_rw, Phi_grid_rw + nR_ * nz_, 0.0); // Reset Phi_grid
+        std::fill(Phi_grid_rw, Phi_grid_rw + nR_ * nz_, 0.0);
 
-        // Loop over source grid points (mass rings)
         for (size_t i_src = 0; i_src < nR_; ++i_src) {
             double R_src = R_grid_[i_src];
-            double dR_src = (i_src < nR_ - 1) ? (R_grid_[i_src+1] - R_grid_[i_src]) : ((i_src > 0) ? (R_grid_[i_src] - R_grid_[i_src-1]) : 0.0);
-            if (dR_src == 0.0 && nR_ > 1) dR_src = (R_grid_[nR_-1] - R_grid_[0]) / (nR_-1);
+            
+            double dR_src = 0.0;
+            if (i_src < nR_ - 1) dR_src = R_grid_[i_src+1] - R_grid_[i_src];
+            else if (i_src > 0) dR_src = R_grid_[i_src] - R_grid_[i_src-1];
             
             for (size_t j_src = 0; j_src < nz_; ++j_src) {
                 double z_src = z_grid_[j_src];
-                double dZ_src = (j_src < nz_ - 1) ? (z_grid_[j_src+1] - z_grid_[j_src]) : ((j_src > 0) ? (z_grid_[j_src] - z_grid_[j_src-1]) : 0.0);
-                if (dZ_src == 0.0 && nz_ > 1) dZ_src = (z_grid_[nz_-1] - z_grid_[0]) / (nz_-1);
+                
+                double dZ_src = 0.0;
+                if (j_src < nz_ - 1) dZ_src = z_grid_[j_src+1] - z_grid_[j_src];
+                else if (j_src > 0) dZ_src = z_grid_[j_src] - z_grid_[j_src-1];
                 
                 double rho_src = rho_grid_r[i_src * nz_ + j_src];
                 
-                // Mass of this cell (approximation for ring mass)
-                double mass_element = rho_src * (2 * M_PI * R_src * dR_src * dZ_src);
+                double mass_element;
+                if (R_src == 0.0) {
+                    double r_cyl = dR_src / 2.0;
+                    mass_element = rho_src * (PI * r_cyl * r_cyl * dZ_src);
+                } else {
+                    mass_element = rho_src * (2 * PI * R_src * dR_src * dZ_src);
+                }
                 
                 if (rho_src == 0.0 || mass_element == 0.0) {
                     continue;
                 }
 
-                // Potential of a ring at (R_src, z_src) evaluated at (R_dest, z_dest)
                 for (size_t i_dest = 0; i_dest < nR_; ++i_dest) {
                     double R_dest = R_grid_[i_dest];
                     for (size_t j_dest = 0; j_dest < nz_; ++j_dest) {
@@ -214,105 +244,20 @@ public:
             }
         }
 
-        // Compute forces from potential using numerical differentiation (central difference)
-        auto FR_grid_rw = FR_grid_.mutable_data();
-        auto FZ_grid_rw = FZ_grid_.mutable_data();
-        
-        for (size_t i = 0; i < nR_; ++i) {
-            for (size_t j = 0; j < nz_; ++j) {
-                // dPhi/dR
-                if (i > 0 && i < nR_ - 1) {
-                    FR_grid_rw[i * nz_ + j] = -(Phi_grid_rw[(i + 1) * nz_ + j] - Phi_grid_rw[(i - 1) * nz_ + j]) / (R_grid_[i+1] - R_grid_[i-1]);
-                } else {
-                    // Boundary handling (forward/backward difference or zero)
-                    FR_grid_rw[i * nz_ + j] = 0.0; // Simplistic
-                }
-
-                // dPhi/dz
-                if (j > 0 && j < nz_ - 1) {
-                    FZ_grid_rw[i * nz_ + j] = -(Phi_grid_rw[i * nz_ + (j + 1)] - Phi_grid_rw[i * nz_ + (j - 1)]) / (z_grid_[j+1] - z_grid_[j-1]);
-                } else {
-                    // Boundary handling
-                    FZ_grid_rw[i * nz_ + j] = 0.0; // Simplistic
-                }
-            }
-        }
+        // Forces are computed in Python wrapper via splines
     }
 
-    // Get interpolated potential and forces
-    py::dict get_potential_and_forces(py::array_t<double> R_py, py::array_t<double> z_py) {
-        py::buffer_info buf_R = R_py.request();
-        py::buffer_info buf_z = z_py.request();
-
-        if (buf_R.ndim != 1 || buf_z.ndim != 1 || buf_R.shape[0] != buf_z.shape[0])
-            throw std::runtime_error("R and z arrays must be 1D and of same size!");
-
-        size_t N = buf_R.shape[0];
-        const double* R_ptr = static_cast<double*>(buf_R.ptr);
-        const double* z_ptr = static_cast<double*>(buf_z.ptr);
-
-        py::array_t<double> Phi_interp({N});
-        py::array_t<double> FR_interp({N});
-        py::array_t<double> FZ_interp({N});
-
-        auto Phi_interp_rw = Phi_interp.mutable_data();
-        auto FR_interp_rw = FR_interp.mutable_data();
-        auto FZ_interp_rw = FZ_interp.mutable_data();
-
-        // Use linear interpolation for now
-        // This is a placeholder, actual interpolation should be done carefully
-        // For actual implementation, a 2D interpolation library should be used (e.g., from Python)
-        // Or implement 2D linear interpolation here.
-        
-        // For now, let's just do nearest neighbor for quick test
-        for (size_t p = 0; p < N; ++p) {
-            double r_val = R_ptr[p];
-            double z_val = z_ptr[p];
-
-            // Find nearest R_grid point
-            size_t iR = 0;
-            double min_dist_R = std::abs(r_val - R_grid_[0]);
-            for (size_t i = 1; i < nR_; ++i) {
-                double dist = std::abs(r_val - R_grid_[i]);
-                if (dist < min_dist_R) {
-                    min_dist_R = dist;
-                    iR = i;
-                }
-            }
-
-            // Find nearest z_grid point
-            size_t iz = 0;
-            double min_dist_z = std::abs(z_val - z_grid_[0]);
-            for (size_t j = 1; j < nz_; ++j) {
-                double dist = std::abs(z_val - z_grid_[j]);
-                if (dist < min_dist_z) {
-                    min_dist_z = dist;
-                    iz = j;
-                }
-            }
-            
-            Phi_interp_rw[p] = *(Phi_grid_.data() + iR * nz_ + iz);
-            FR_interp_rw[p] = *(FR_grid_.data() + iR * nz_ + iz);
-            FZ_interp_rw[p] = *(FZ_grid_.data() + iR * nz_ + iz);
-        }
-        
-        py::dict result;
-        result["Phi"] = Phi_interp;
-        result["FR"] = FR_interp;
-        result["FZ"] = FZ_interp;
-        return result;
-    }
+    py::array_t<double> get_rho_grid() const { return rho_grid_; }
+    py::array_t<double> get_Phi_grid() const { return Phi_grid_; }
 
 private:
     double eps_;
-    int nR_, nz_;
+    size_t nR_, nz_;
     std::vector<double> R_grid_;
     std::vector<double> z_grid_;
     
     py::array_t<double> rho_grid_;
     py::array_t<double> Phi_grid_;
-    py::array_t<double> FR_grid_;
-    py::array_t<double> FZ_grid_;
 
     // Galaxy parameters
     double m200_, c200_, m_bulge_, a_bulge_, M_disc_star_, R_d_star_, z_d_star_, M_disc_gas_, R_d_gas_, z_d_gas_;
@@ -320,12 +265,12 @@ private:
 
 // pybind11 module definition
 PYBIND11_MODULE(_grid_solver_cpp, m) {
-    m.doc() = "pybind11 plugin for C++ grid solver for galaxy ICs"; // optional module docstring
+    m.doc() = "pybind11 plugin for C++ grid solver for galaxy ICs";
 
     py::class_<GridSolverCpp>(m, "GridSolverCpp")
         .def(py::init<
             py::array_t<double>, py::array_t<double>, double,
-            double, double, double, double, double, double, double, double, double, double, double
+            double, double, double, double, double, double, double, double, double, double
         >(),
             py::arg("R_grid"), py::arg("z_grid"), py::arg("eps"),
             py::arg("m200"), py::arg("c200"), py::arg("m_bulge"), py::arg("a_bulge"),
@@ -335,6 +280,6 @@ PYBIND11_MODULE(_grid_solver_cpp, m) {
         .def("bin_particles_to_grid", &GridSolverCpp::bin_particles_to_grid,
              py::arg("all_pos_dict"), py::arg("all_mass_dict"))
         .def("compute_potential_grid", &GridSolverCpp::compute_potential_grid)
-        .def("get_potential_and_forces", &GridSolverCpp::get_potential_and_forces,
-             py::arg("R"), py::arg("z"));
+        .def_property_readonly("rho_grid", &GridSolverCpp::get_rho_grid)
+        .def_property_readonly("Phi_grid", &GridSolverCpp::get_Phi_grid);
 }

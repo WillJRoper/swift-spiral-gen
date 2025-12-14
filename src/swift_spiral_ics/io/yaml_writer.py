@@ -38,6 +38,7 @@ def generate_swift_params(
     time_end_gyr: float,
     snapshot_dt_myr: float,
     dt_min_gyr: float,
+    softening_kpc: float,
     output_basename: str = "snapshot",
     run_name: str | None = None,
     param_template: str = "eagle_ref_cosmo",
@@ -45,6 +46,7 @@ def generate_swift_params(
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
     snapshot_dt_gyr = snapshot_dt_myr / 1000.0
+    softening_mpc = softening_kpc / 1000.0
 
     replacements = {
         "__RUN_NAME__": run_name or "swift_spiral_run",
@@ -53,6 +55,7 @@ def generate_swift_params(
         "__SNAP_DT__": f"{snapshot_dt_gyr}",
         "__STAT_DT__": f"{snapshot_dt_gyr}",
         "__DT_MIN_GYR__": f"{dt_min_gyr}",
+        "__SOFTENING__": f"{softening_mpc}",
     }
 
     for token, value in replacements.items():

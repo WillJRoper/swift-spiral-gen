@@ -5,9 +5,8 @@ from scipy import optimize
 from scipy.special import lambertw
 from tqdm import tqdm
 from numba import njit
-from .profiles import nfw_params, nfw_density, nfw_mass, hernquist_density, hernquist_mass, disc_sigma_0, exponential_surface_density
-from .kinematics import escape_velocity, jeans_dispersion_spherical, asymmetric_drift_correction, disc_velocity_dispersions, gas_dispersion_from_temperature, toomre_q_dispersion
-from .potentials import total_circular_velocity
+from .profiles import nfw_params # Keep for sampling positions
+from .kinematics import escape_velocity_from_grid, gas_dispersion_from_temperature, jeans_dispersion_spherical_from_grid
 from .perturbations import bar_density_modulation, bar_streaming_velocity, apply_position_perturbation_bar, spiral_streaming_velocity
 
 
@@ -273,6 +272,7 @@ def sample_halo_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
+    mass_halo: np.ndarray,
     rng: np.random.Generator,
     grid_solver: "GalaxyGridSolver",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -290,32 +290,17 @@ def sample_halo_velocities(
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
 
-    # Extract galaxy parameters from grid_solver
-    m200 = grid_solver.m200
-    c200 = grid_solver.c200
-    m_bulge = grid_solver.m_bulge
-    a_bulge = grid_solver.a_bulge
-    M_disc_star = grid_solver.M_disc_star
-    R_d_star = grid_solver.R_d_star
-    z_d_star = grid_solver.z_d_star
-    M_disc_gas = grid_solver.M_disc_gas
-    R_d_gas = grid_solver.R_d_gas
-    z_d_gas = grid_solver.z_d_gas
-    
-    sigma_r = jeans_dispersion_spherical(
-        r_coords=r,
-        profile_type="nfw",
-        m200=m200, c200=c200,
-        m_bulge=m_bulge, a_bulge=a_bulge,
-        M_disc_star=M_disc_star, R_d_star=R_d_star, z_d_star=z_d_star,
-        M_disc_gas=M_disc_gas, R_d_gas=R_d_gas, z_d_gas=z_d_gas,
+    # Get dispersions from Jeans equation using grid potential
+    sigma_r = jeans_dispersion_spherical_from_grid(
+        r,
+        grid_solver=grid_solver,
+        pos_comp=np.column_stack([x, y, z]),
+        mass_comp=mass_halo,
         beta=0.0
     )
 
     # Sample velocities from Gaussian (truncated at escape velocity)
-    v_esc = escape_velocity(
-        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-    )
+    v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
     vx = rng.normal(0, sigma_r, N)
     vy = rng.normal(0, sigma_r, N)
@@ -338,6 +323,7 @@ def sample_bulge_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
+    mass_bulge: np.ndarray,
     rng: np.random.Generator,
     grid_solver: "GalaxyGridSolver",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -355,33 +341,17 @@ def sample_bulge_velocities(
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
 
-    # Extract galaxy parameters from grid_solver
-    m200 = grid_solver.m200
-    c200 = grid_solver.c200
-    m_bulge = grid_solver.m_bulge
-    a_bulge = grid_solver.a_bulge
-    M_disc_star = grid_solver.M_disc_star
-    R_d_star = grid_solver.R_d_star
-    z_d_star = grid_solver.z_d_star
-    M_disc_gas = grid_solver.M_disc_gas
-    R_d_gas = grid_solver.R_d_gas
-    z_d_gas = grid_solver.z_d_gas
-
     # Get dispersions
-    sigma_r = jeans_dispersion_spherical(
-        r_coords=r,
-        profile_type="hernquist",
-        m200=m200, c200=c200,
-        m_bulge=m_bulge, a_bulge=a_bulge,
-        M_disc_star=M_disc_star, R_d_star=R_d_star, z_d_star=z_d_star,
-        M_disc_gas=M_disc_gas, R_d_gas=R_d_gas, z_d_gas=z_d_gas,
+    sigma_r = jeans_dispersion_spherical_from_grid(
+        r,
+        grid_solver=grid_solver,
+        pos_comp=np.column_stack([x, y, z]),
+        mass_comp=mass_bulge,
         beta=0.0
     )
 
     # Sample velocities
-    v_esc = escape_velocity(
-        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-    )
+    v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
     vx = rng.normal(0, sigma_r, N)
     vy = rng.normal(0, sigma_r, N)
@@ -404,6 +374,7 @@ def sample_disc_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
+    mass_disc: np.ndarray,
     M_disc: float,
     R_d: float,
     z_d: float,
@@ -435,94 +406,10 @@ def sample_disc_velocities(
     R = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
 
-    # Extract galaxy parameters from grid_solver
-    m200 = grid_solver.m200
-    c200 = grid_solver.c200
-    m_bulge = grid_solver.m_bulge
-    a_bulge = grid_solver.a_bulge
-    M_disc_star = grid_solver.M_disc_star
-    R_d_star = grid_solver.R_d_star
-    z_d_star = grid_solver.z_d_star
-    M_disc_gas = grid_solver.M_disc_gas
-    R_d_gas = grid_solver.R_d_gas
-    z_d_gas = grid_solver.z_d_gas
-
-    # Get circular velocity
-    R_unique = np.linspace(1e-3, 30, 200) # Ensure no R=0
-    v_c_profile = total_circular_velocity(
-        R_unique,
-        m200,
-        c200,
-        m_bulge,
-        a_bulge,
-        M_disc_star,
-        R_d_star,
-        z_d_star,
-        M_disc_gas,
-        R_d_gas,
-        z_d_gas,
+    # Get kinematic profiles from grid_solver
+    v_c, sigma_R, sigma_phi, sigma_z, v_phi_mean = grid_solver.get_cylindrical_kinematics(
+        R, np.column_stack([x, y, z]), mass_disc, M_disc, R_d, z_d, Q_target, is_gas
     )
-
-    # Calculate dispersion profiles on the grid
-    sigma_0 = disc_sigma_0(M_disc, R_d)
-    sigma_surf_profile = exponential_surface_density(R_unique, sigma_0, R_d)
-    
-    if is_gas:
-        # Temperature based
-        T_gas = 1e4
-        sigma_thermal = gas_dispersion_from_temperature(T_gas)
-        sigma_R_profile = np.full_like(R_unique, sigma_thermal)
-    else:
-        # Toomre Q based
-        sigma_R_profile = toomre_q_dispersion(
-            R_unique, v_c_profile, sigma_surf_profile, Q_target,
-            m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-        )
-        
-    # Ensure gas has thermal floor (if Q based logic was used for gas, but here we separated it)
-    # If is_gas=False, checking floor is still good practice for stability
-    if not is_gas:
-        sigma_R_profile = np.maximum(sigma_R_profile, 5.0)
-
-    sigma_phi_profile, sigma_z_profile = disc_velocity_dispersions(R_unique, sigma_R_profile)
-
-    # Calculate asymmetric drift numerically on the grid
-    # v_phi^2 = v_c^2 + sigma_R^2 * (dln(nu)/dlnR + dln(sigma_R^2)/dlnR + 1 - (sigma_phi/sigma_R)^2)
-    # derivatives wrt R: dlnX/dlnR = R * dlnX/dR
-    
-    # Gradient of log Surface Density
-    # For exponential, this is analytically -1/R_d, but let's be consistent numerically
-    ln_Sigma = np.log(sigma_surf_profile)
-    d_ln_Sigma_dR = np.gradient(ln_Sigma, R_unique)
-    
-    # Gradient of log sigma_R^2
-    ln_sigma2 = np.log(sigma_R_profile**2)
-    d_ln_sigma2_dR = np.gradient(ln_sigma2, R_unique)
-    
-    # Anisotropy term
-    ratio_sq = (sigma_phi_profile / sigma_R_profile)**2
-    term_anisotropy = 1.0 - ratio_sq
-    
-    # Jeans equation terms (all multiplied by R/sigma_R^2 in some forms, but here we use derivatives wrt R)
-    # Force balance: v_c^2/R - v_phi^2/R = -1/rho * d(rho sigma^2)/dR - ...
-    # v_phi^2 = v_c^2 + (R/rho) * d(rho sigma^2)/dR
-    #         = v_c^2 + R * sigma_R^2 * (dlnRho/dR + dlnSigma2/dR)
-    # (Simplified for thin disc, neglecting sigma_z term)
-    
-    # Correct formula: v_phi^2 = v_c^2 + sigma_R^2 * [ R * (dlnSigma/dR + dlnSigma2/dR) + (1 - ratio_sq) ]
-    # Note: The derivative terms are usually negative, so they reduce velocity.
-    # dlnSigma/dR is negative.
-    
-    bracket = R_unique * (d_ln_Sigma_dR + d_ln_sigma2_dR) + term_anisotropy
-    v_phi_sq_profile = v_c_profile**2 + sigma_R_profile**2 * bracket
-    v_phi_profile = np.sqrt(np.maximum(v_phi_sq_profile, 0.0))
-
-    # Interpolate to particle positions
-    v_c = np.interp(R, R_unique, v_c_profile)
-    sigma_R = np.interp(R, R_unique, sigma_R_profile)
-    sigma_phi = np.interp(R, R_unique, sigma_phi_profile)
-    sigma_z = np.interp(R, R_unique, sigma_z_profile)
-    v_phi_mean = np.interp(R, R_unique, v_phi_profile)
 
     # Add spiral streaming if present
     v_R_stream = np.zeros(N)
@@ -562,11 +449,7 @@ def sample_disc_velocities(
     vz = v_z
 
     # Truncate at escape velocity (safety check)
-    from .kinematics import escape_velocity
-
-    v_esc = escape_velocity(
-        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-    )  # Note: escape_velocity signature needs update or checking, assuming it takes all mass components
+    v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
     v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
     too_fast = v_mag > v_esc
