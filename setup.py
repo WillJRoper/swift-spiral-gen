@@ -3,6 +3,8 @@ import os
 import sys
 import platform
 import subprocess
+import re
+import site
 
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
@@ -43,10 +45,28 @@ class CMakeBuild(build_ext):
         #               '-DPYTHON_EXECUTABLE={}'.format(sys.executable),
         #               '-DCMAKE_BUILD_TYPE={}'.format(cfg)]
         # This will be passed to `cmake`
+        # Find pybind11 install directory
+        pybind11_cmake_dir = ""
+        try:
+            pybind11_cmake_dir = subprocess.check_output(
+                [sys.executable, "-m", "pybind11", "--cmakedir"], text=True
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # Fallback if pybind11 --cmakedir is not found (older versions or custom install)
+            # Try common install locations within site-packages
+            for sp in site.getsitepackages():
+                test_path = os.path.join(sp, 'pybind11', 'share', 'cmake', 'pybind11')
+                if os.path.exists(test_path):
+                    pybind11_cmake_dir = test_path
+                    break
+            if not os.path.exists(pybind11_cmake_dir):
+                raise RuntimeError("Could not find pybind11 CMake directory. Please ensure pybind11 is installed.")
+
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
-            f"-DCMAKE_BUILD_TYPE={cfg}",  # not used on Windows?
+            f"-DCMAKE_BUILD_TYPE={cfg}",
+            f"-Dpybind11_DIR={pybind11_cmake_dir}", # Pass pybind11 CMake directory
         ]
         build_args = []
 
