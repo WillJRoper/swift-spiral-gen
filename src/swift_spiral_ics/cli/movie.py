@@ -74,7 +74,8 @@ def render_snapshot(
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region
+                region=region,
+                backend="histogram" # Force histogram for DM as it has no smoothing length
             )
             combined_density += dm_map.value * 1.0 # Increased weight for DM to 1.0
 
