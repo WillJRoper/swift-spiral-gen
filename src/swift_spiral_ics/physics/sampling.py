@@ -273,33 +273,15 @@ def sample_halo_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
-    m200: float,
-    c200: float,
-    m_bulge: float,
-    a_bulge: float,
-    M_disc_star: float,
-    R_d_star: float,
-    z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
     rng: np.random.Generator,
+    grid_solver: "GalaxyGridSolver",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for halo particles using Jeans equation.
 
     Args:
         x, y, z: Particle positions (kpc).
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
+        grid_solver: Instance of GalaxyGridSolver with computed potential.
 
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
@@ -308,13 +290,20 @@ def sample_halo_velocities(
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
 
-    # Get dispersions from Jeans equation
-    # Halo density for Jeans equation (only halo supports itself via dispersion shape, 
-    # but potential is total)
-    r_s, delta_c = nfw_params(m200, c200) # This is needed for the profile shape
+    # Extract galaxy parameters from grid_solver
+    m200 = grid_solver.m200
+    c200 = grid_solver.c200
+    m_bulge = grid_solver.m_bulge
+    a_bulge = grid_solver.a_bulge
+    M_disc_star = grid_solver.M_disc_star
+    R_d_star = grid_solver.R_d_star
+    z_d_star = grid_solver.z_d_star
+    M_disc_gas = grid_solver.M_disc_gas
+    R_d_gas = grid_solver.R_d_gas
+    z_d_gas = grid_solver.z_d_gas
     
     sigma_r = jeans_dispersion_spherical(
-        r,
+        r_coords=r,
         profile_type="nfw",
         m200=m200, c200=c200,
         m_bulge=m_bulge, a_bulge=a_bulge,
@@ -336,6 +325,7 @@ def sample_halo_velocities(
     v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
     too_fast = v_mag > v_esc
     if np.any(too_fast):
+        # Rescale to 99% of escape velocity
         rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
         vx[too_fast] *= rescale
         vy[too_fast] *= rescale
@@ -348,35 +338,15 @@ def sample_bulge_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
-    m200: float,
-    c200: float,
-    m_bulge: float,
-    a_bulge: float,
-    M_disc_star: float,
-    R_d_star: float,
-    z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
     rng: np.random.Generator,
+    grid_solver: "GalaxyGridSolver",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for bulge particles using Jeans equation.
 
-    Similar to halo but uses Hernquist profile for dispersions.
-
     Args:
         x, y, z: Particle positions (kpc).
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
+        grid_solver: Instance of GalaxyGridSolver with computed potential.
 
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
@@ -385,9 +355,21 @@ def sample_bulge_velocities(
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
 
+    # Extract galaxy parameters from grid_solver
+    m200 = grid_solver.m200
+    c200 = grid_solver.c200
+    m_bulge = grid_solver.m_bulge
+    a_bulge = grid_solver.a_bulge
+    M_disc_star = grid_solver.M_disc_star
+    R_d_star = grid_solver.R_d_star
+    z_d_star = grid_solver.z_d_star
+    M_disc_gas = grid_solver.M_disc_gas
+    R_d_gas = grid_solver.R_d_gas
+    z_d_gas = grid_solver.z_d_gas
+
     # Get dispersions
     sigma_r = jeans_dispersion_spherical(
-        r,
+        r_coords=r,
         profile_type="hernquist",
         m200=m200, c200=c200,
         m_bulge=m_bulge, a_bulge=a_bulge,
@@ -409,6 +391,7 @@ def sample_bulge_velocities(
     v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
     too_fast = v_mag > v_esc
     if np.any(too_fast):
+        # Rescale to 99% of escape velocity
         rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
         vx[too_fast] *= rescale
         vy[too_fast] *= rescale
@@ -425,17 +408,8 @@ def sample_disc_velocities(
     R_d: float,
     z_d: float,
     Q_target: float,
-    m200: float,
-    c200: float,
-    m_bulge: float,
-    a_bulge: float,
-    M_disc_star: float,
-    R_d_star: float,
-    z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
     rng: np.random.Generator,
+    grid_solver: "GalaxyGridSolver",
     spiral_params: dict | None = None,
     bar_params: dict | None = None,
     is_gas: bool = False,
@@ -448,17 +422,8 @@ def sample_disc_velocities(
         R_d: This disc's scale length (kpc).
         z_d: This disc's scale height (kpc).
         Q_target: Target Toomre Q parameter.
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Total stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
+        grid_solver: Instance of GalaxyGridSolver with computed potential.
         spiral_params: Optional dict with spiral arm parameters.
         bar_params: Optional dict with bar parameters.
         is_gas: If True, use temperature-based dispersion instead of Q.
@@ -469,6 +434,18 @@ def sample_disc_velocities(
     N = len(x)
     R = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
+
+    # Extract galaxy parameters from grid_solver
+    m200 = grid_solver.m200
+    c200 = grid_solver.c200
+    m_bulge = grid_solver.m_bulge
+    a_bulge = grid_solver.a_bulge
+    M_disc_star = grid_solver.M_disc_star
+    R_d_star = grid_solver.R_d_star
+    z_d_star = grid_solver.z_d_star
+    M_disc_gas = grid_solver.M_disc_gas
+    R_d_gas = grid_solver.R_d_gas
+    z_d_gas = grid_solver.z_d_gas
 
     # Get circular velocity
     R_unique = np.linspace(1e-3, 30, 200) # Ensure no R=0

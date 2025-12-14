@@ -25,6 +25,7 @@ from ..physics.sampling import (
     sample_hernquist_bulge,
     sample_nfw_halo,
 )
+from ..physics.grid_solver import GalaxyGridSolver # Import new solver
 from ..utils.random import get_rng
 
 
@@ -44,6 +45,13 @@ def parse_args():
     parser.add_argument("--box-kpc", type=float, default=500.0, help="Simulation box size (kpc)")
     parser.add_argument("--m-part-msun", type=float, required=True, help="Particle mass (Msun)")
     parser.add_argument("--n-galaxies", type=int, default=1, help="Number of galaxies (>=1)")
+    
+    # Grid solver parameters
+    parser.add_argument("--R-grid-kpc", type=float, default=50.0, help="Radial extent of potential grid (kpc)")
+    parser.add_argument("--z-grid-kpc", type=float, default=20.0, help="Vertical extent of potential grid (kpc)")
+    parser.add_argument("--nR-grid", type=int, default=64, help="Number of radial grid bins")
+    parser.add_argument("--nz-grid", type=int, default=64, help="Number of vertical grid bins")
+    parser.add_argument("--eps-grid", type=float, default=0.1, help="Softening length for grid potential (kpc)")
 
     # Simulation time parameters
     parser.add_argument("--time-end-gyr", type=float, default=2.0, help="Simulation end time (Gyr)")
@@ -331,12 +339,12 @@ def validate_args(args):
         )
 
 
-def generate_galaxy(
+def generate_galaxy_positions(
     galaxy_idx: int,
     args,
     rng: np.random.Generator,
 ) -> dict:
-    """Generate a single galaxy.
+    """Generate positions and masses for a single galaxy.
 
     Args:
         galaxy_idx: Index of galaxy (0 = primary).
@@ -344,9 +352,10 @@ def generate_galaxy(
         rng: Random number generator.
 
     Returns:
-        Dict with 'dm', 'gas', 'stars' keys containing particle data.
+        Dict with 'dm', 'gas', 'stars' keys, each containing
+        'pos' (N,3) and 'mass' (N) arrays.
     """
-    print(f"\nGenerating galaxy {galaxy_idx}...")
+    print(f"\nGenerating positions for galaxy {galaxy_idx}...")
 
     # Extract parameters for this galaxy
     m200 = args.m200_msun[galaxy_idx]
@@ -402,122 +411,50 @@ def generate_galaxy(
         print(f"  Bar: r={bar_params['radius']:.2f} kpc, q={bar_params['q']:.2f}")
 
     # Sample particles
-    print("  Sampling halo particles...")
-    from ..physics.profiles import nfw_params
-
+    print("  Sampling halo positions...")
     r_s, _ = nfw_params(m200, c200)
     r_max = 10 * r_s  # Truncate at 10 * r_s
 
     x_dm, y_dm, z_dm = sample_nfw_halo(N_dm, m200, c200, r_max, rng)
 
-    print("  Sampling gas disc particles...")
+    print("  Sampling gas disc positions...")
     x_gas, y_gas, z_gas = sample_exponential_disc(
         N_gas, m_gas, R_g, z_g, rng, spiral_params=spiral_params, bar_params=bar_params
     )
 
-    print("  Sampling stellar disc particles...")
+    print("  Sampling stellar disc positions...")
     x_disc, y_disc, z_disc = sample_exponential_disc(
         N_disc_star, m_disc_star, R_d, z_d, rng, spiral_params=spiral_params, bar_params=bar_params
     )
 
     if N_bulge > 0:
-        print("  Sampling bulge particles...")
+        print("  Sampling bulge positions...")
         x_bulge, y_bulge, z_bulge = sample_hernquist_bulge(N_bulge, m_bulge, a_bulge, rng)
     else:
         x_bulge = y_bulge = z_bulge = np.array([])
-
-    # Sample velocities
-    print("  Sampling halo velocities...")
-    vx_dm, vy_dm, vz_dm = sample_halo_velocities(
-        x_dm, y_dm, z_dm, m200, c200, m_bulge, a_bulge, m_disc_star, R_d, z_d, m_gas, R_g, z_g, rng
-    )
-
-    print("  Sampling gas disc velocities...")
-    vx_gas, vy_gas, vz_gas = sample_disc_velocities(
-        x_gas,
-        y_gas,
-        z_gas,
-        m_gas,
-        R_g,
-        z_g,
-        args.q_gas,
-        m200,
-        c200,
-        m_bulge,
-        a_bulge,
-        m_disc_star,
-        R_d,
-        z_d,
-        m_gas,
-        R_g,
-        z_g,
-        rng,
-        spiral_params=spiral_params,
-        bar_params=bar_params,
-        is_gas=True,
-    )
-
-    print("  Sampling stellar disc velocities...")
-    vx_disc, vy_disc, vz_disc = sample_disc_velocities(
-        x_disc,
-        y_disc,
-        z_disc,
-        m_disc_star,
-        R_d,
-        z_d,
-        args.q_star,
-        m200,
-        c200,
-        m_bulge,
-        a_bulge,
-        m_disc_star,
-        R_d,
-        z_d,
-        m_gas,
-        R_g,
-        z_g,
-        rng,
-        spiral_params=spiral_params,
-        bar_params=bar_params,
-        is_gas=False,
-    )
-
-    if N_bulge > 0:
-        print("  Sampling bulge velocities...")
-        vx_bulge, vy_bulge, vz_bulge = sample_bulge_velocities(
-            x_bulge, y_bulge, z_bulge, m200, c200, m_bulge, a_bulge, m_disc_star, R_d, z_d, m_gas, R_g, z_g, rng
-        )
-    else:
-        vx_bulge = vy_bulge = vz_bulge = np.array([])
 
     # Combine stellar components
     x_star = np.concatenate([x_disc, x_bulge])
     y_star = np.concatenate([y_disc, y_bulge])
     z_star = np.concatenate([z_disc, z_bulge])
-    vx_star = np.concatenate([vx_disc, vx_bulge])
-    vy_star = np.concatenate([vy_disc, vy_bulge])
-    vz_star = np.concatenate([vz_disc, vz_bulge])
-
-    # Package particle data
-    galaxy_data = {
+    
+    # Package particle data (positions and masses only)
+    galaxy_pos_mass_data = {
         "dm": {
             "pos": np.column_stack([x_dm, y_dm, z_dm]),
-            "vel": np.column_stack([vx_dm, vy_dm, vz_dm]),
             "mass": np.full(N_dm, args.m_part_msun),
         },
         "gas": {
             "pos": np.column_stack([x_gas, y_gas, z_gas]),
-            "vel": np.column_stack([vx_gas, vy_gas, vz_gas]),
             "mass": np.full(N_gas, args.m_part_msun),
         },
         "stars": {
             "pos": np.column_stack([x_star, y_star, z_star]),
-            "vel": np.column_stack([vx_star, vy_star, vz_star]),
             "mass": np.full(len(x_star), args.m_part_msun),
         },
     }
 
-    return galaxy_data
+    return galaxy_pos_mass_data
 
 
 def add_uniform_background(
@@ -651,20 +588,20 @@ def main():
     # Initialize RNG
     rng = get_rng(args.seed)
 
-    # Generate galaxies
-    galaxies = []
+    # 1. Generate positions and masses for all galaxies
+    galaxies_pos_mass = []
     for i in range(args.n_galaxies):
-        galaxy_data = generate_galaxy(i, args, rng)
-        galaxies.append(galaxy_data)
+        galaxy_pos_mass_data = generate_galaxy_positions(i, args, rng)
+        galaxies_pos_mass.append(galaxy_pos_mass_data)
 
-    # Place galaxies in orbits (if multiple galaxies)
+    # 2. Apply merger orbits and COM correction (positions only for now)
     if args.n_galaxies > 1:
         print("\n" + "=" * 70)
-        print("CONFIGURING MERGER ORBITS")
+        print("CONFIGURING MERGER ORBITS (positions only)")
         print("=" * 70)
 
         # Primary galaxy is at origin with zero velocity
-        # Calculate total masses
+        # Calculate total masses (using args values directly)
         M_primary = args.m200_msun[0] + args.m_star_msun[0] + args.m_gas_msun[0]
 
         # Place secondary galaxies
@@ -684,103 +621,228 @@ def main():
             print(f"  Disc inclination = {inclination:.1f} deg, node = {node:.1f} deg")
 
             # Calculate orbit
-            orbit_pos, orbit_vel = parabolic_orbit_initial_conditions(
+            orbit_pos, orbit_vel_dummy = parabolic_orbit_initial_conditions( # orbit_vel not used now
                 M_primary, M_secondary, r_init, r_peri, orbit_plane
             )
 
             # Place galaxy
-            secondary = galaxies[i]
+            secondary_galaxy = galaxies_pos_mass[i]
             for comp_name in ["dm", "gas", "stars"]:
-                if len(secondary[comp_name]["pos"]) > 0:
-                    pos = secondary[comp_name]["pos"]
-                    vel = secondary[comp_name]["vel"]
+                if len(secondary_galaxy[comp_name]["pos"]) > 0:
+                    pos = secondary_galaxy[comp_name]["pos"]
 
                     x, y, z = pos[:, 0], pos[:, 1], pos[:, 2]
-                    vx, vy, vz = vel[:, 0], vel[:, 1], vel[:, 2]
+                    # Dummy velocities for rotation, will be re-sampled later
+                    vx_dummy = np.zeros_like(x) 
+                    vy_dummy = np.zeros_like(y)
+                    vz_dummy = np.zeros_like(z)
 
-                    x_new, y_new, z_new, vx_new, vy_new, vz_new = place_galaxy_in_orbit(
-                        x, y, z, vx, vy, vz, orbit_pos, orbit_vel, inclination, node
+                    x_new, y_new, z_new, _, _, _ = place_galaxy_in_orbit(
+                        x, y, z, vx_dummy, vy_dummy, vz_dummy, orbit_pos, orbit_vel_dummy, inclination, node
                     )
 
-                    secondary[comp_name]["pos"] = np.column_stack([x_new, y_new, z_new])
-                    secondary[comp_name]["vel"] = np.column_stack([vx_new, vy_new, vz_new])
+                    secondary_galaxy[comp_name]["pos"] = np.column_stack([x_new, y_new, z_new])
 
         # Apply COM correction
-        print("\nApplying center-of-mass correction...")
-        all_masses = []
-        all_positions = []
-        all_velocities = []
-
-        for galaxy in galaxies:
+        print("\nApplying center-of-mass correction to positions...")
+        all_masses_for_com = []
+        all_positions_for_com = []
+        
+        for galaxy in galaxies_pos_mass:
             for comp_name in ["dm", "gas", "stars"]:
                 if len(galaxy[comp_name]["pos"]) > 0:
-                    N = len(galaxy[comp_name]["pos"])
-                    all_masses.append(galaxy[comp_name]["mass"])
-                    all_positions.append(tuple(galaxy[comp_name]["pos"].T))
-                    all_velocities.append(tuple(galaxy[comp_name]["vel"].T))
+                    all_masses_for_com.append(galaxy[comp_name]["mass"])
+                    all_positions_for_com.append(tuple(galaxy[comp_name]["pos"].T))
 
-        pos_corrected, vel_corrected = center_of_mass_correction(
-            all_masses, all_positions, all_velocities
+        pos_corrected, _ = center_of_mass_correction( # Dummy velocities removed
+            all_masses_for_com, all_positions_for_com, [None]*len(all_positions_for_com)
         )
 
         # Reassign corrected values
         idx = 0
-        for galaxy in galaxies:
+        for galaxy in galaxies_pos_mass:
             for comp_name in ["dm", "gas", "stars"]:
                 if len(galaxy[comp_name]["pos"]) > 0:
                     x, y, z = pos_corrected[idx]
-                    vx, vy, vz = vel_corrected[idx]
                     galaxy[comp_name]["pos"] = np.column_stack([x, y, z])
-                    galaxy[comp_name]["vel"] = np.column_stack([vx, vy, vz])
                     idx += 1
 
-    # Combine all galaxies
-    print("\n" + "=" * 70)
-    print("COMBINING GALAXIES")
-    print("=" * 70)
-
-    combined_data = {
-        "dm": {"pos": [], "vel": [], "mass": []},
-        "gas": {"pos": [], "vel": [], "mass": []},
-        "stars": {"pos": [], "vel": [], "mass": []},
-    }
-
-    for galaxy in galaxies:
+    # 3. Combine all galaxy particles into a single structure
+    # This includes background particles if requested
+    all_pos_dict = {"dm": [], "gas": [], "stars": []}
+    all_mass_dict = {"dm": [], "gas": [], "stars": []}
+    
+    for galaxy in galaxies_pos_mass:
         for comp_name in ["dm", "gas", "stars"]:
             if len(galaxy[comp_name]["pos"]) > 0:
-                combined_data[comp_name]["pos"].append(galaxy[comp_name]["pos"])
-                combined_data[comp_name]["vel"].append(galaxy[comp_name]["vel"])
-                combined_data[comp_name]["mass"].append(galaxy[comp_name]["mass"])
+                all_pos_dict[comp_name].append(galaxy[comp_name]["pos"])
+                all_mass_dict[comp_name].append(galaxy[comp_name]["mass"])
 
+    # Process background particles if requested
+    print("\n" + "=" * 70)
+    print("GENERATING BACKGROUND PARTICLES")
+    print("=" * 70)
+
+    # The add_uniform_background function returns updated dictionaries.
+    # It must be called with initial empty lists if no galaxy particles of that type.
+    # It also manages mass assignment for background particles.
+    
+    # Flatten initial galaxy data for background function input format
+    initial_combined_data = {
+        "dm": {"pos": np.array([]).reshape(0,3), "mass": np.array([])},
+        "gas": {"pos": np.array([]).reshape(0,3), "mass": np.array([])},
+        "stars": {"pos": np.array([]).reshape(0,3), "mass": np.array([])},
+    }
     for comp_name in ["dm", "gas", "stars"]:
-        if combined_data[comp_name]["pos"]:
-            combined_data[comp_name]["pos"] = np.vstack(combined_data[comp_name]["pos"])
-            combined_data[comp_name]["vel"] = np.vstack(combined_data[comp_name]["vel"])
-            combined_data[comp_name]["mass"] = np.concatenate(combined_data[comp_name]["mass"])
-        else:
-            combined_data[comp_name]["pos"] = np.array([]).reshape(0, 3)
-            combined_data[comp_name]["vel"] = np.array([]).reshape(0, 3)
-            combined_data[comp_name]["mass"] = np.array([])
-
-    # Center in box
-    print("\nCentering in simulation box...")
-    box_center = args.box_kpc / 2.0
-    for comp_name in ["dm", "gas", "stars"]:
-        if len(combined_data[comp_name]["pos"]) > 0:
-            combined_data[comp_name]["pos"] += box_center
-
-    # Add uniform background components (no recentering needed)
-    combined_data = add_uniform_background(
-        combined_data,
+        if all_pos_dict[comp_name]:
+            initial_combined_data[comp_name]["pos"] = np.vstack(all_pos_dict[comp_name])
+            initial_combined_data[comp_name]["mass"] = np.concatenate(all_mass_dict[comp_name])
+            
+    final_pos_mass_data = add_uniform_background(
+        initial_combined_data,
         box_size=args.box_kpc,
-        m_part=args.m_part_msun,
+        m_part=args.m_part_msun, # For galaxy particles only if no grid, ignored otherwise
         rho_gas=args.bg_gas_density_msun_kpc3,
         rho_dm=args.bg_dm_density_msun_kpc3,
         grid_spacing=args.bg_grid_kpc,
         rng=rng,
     )
+    
+    all_pos_final = {k: v["pos"] for k,v in final_pos_mass_data.items()}
+    all_mass_final = {k: v["mass"] for k,v in final_pos_mass_data.items()}
 
-    # Write IC file
+    # Center all particles in box (after background added)
+    print("\nCentering all particles in simulation box...")
+    box_center = args.box_kpc / 2.0
+    for comp_name in ["dm", "gas", "stars"]:
+        if all_pos_final[comp_name].size > 0:
+            all_pos_final[comp_name] += box_center
+
+    # 4. Initialize and run Grid Solver (Poisson part)
+    print("\n" + "=" * 70)
+    print("COMPUTING SELF-CONSISTENT POTENTIAL ON GRID")
+    print("=" * 70)
+    
+    R_grid = np.linspace(0, args.R_grid_kpc, args.nR_grid) # Radial grid
+    z_grid = np.linspace(-args.z_grid_kpc, args.z_grid_kpc, args.nz_grid) # Vertical grid
+    
+    grid_solver = GalaxyGridSolver(
+        R_grid, z_grid, args.eps_grid,
+        m200=args.m200_msun[0], c200=args.c200[0], # Assuming single primary galaxy
+        m_bulge=args.m_star_msun[0] * (1 - args.dt[0]), # M_bulge for primary
+        a_bulge=args.bulge_a_kpc[0], # a_bulge for primary
+        M_disc_star=args.m_star_msun[0] * args.dt[0], # M_disc_star for primary
+        R_d_star=args.rd_kpc[0], z_d_star=args.zd_kpc[0], # Disc params for primary
+        M_disc_gas=args.m_gas_msun[0], R_d_gas=args.rg_kpc[0], z_d_gas=args.zg_kpc[0] # Gas disc params for primary
+    )
+    grid_solver.bin_particles_to_grid(all_pos_final, all_mass_final)
+    grid_solver.compute_potential_grid()
+
+    # 5. Generate velocities using grid solver's potential
+    print("\n" + "=" * 70)
+    print("GENERATING VELOCITIES FROM GRID POTENTIAL")
+    print("=" * 70)
+
+    # These will be the components of the final combined_data
+    dm_vels = np.array([]).reshape(0,3)
+    gas_vels = np.array([]).reshape(0,3)
+    stars_vels = np.array([]).reshape(0,3)
+    
+    # Loop over original galaxies again to process velocities
+    offset_dm = 0
+    offset_gas = 0
+    offset_stars = 0
+
+    for i, galaxy_pos_mass_data in enumerate(galaxies_pos_mass):
+        # Extract galaxy parameters for current galaxy
+        m200 = args.m200_msun[i]
+        c200 = args.c200[i]
+        m_star = args.m_star_msun[i]
+        m_gas = args.m_gas_msun[i]
+        dt_ratio = args.dt[i]
+        R_d = args.rd_kpc[i]
+        z_d = args.zd_kpc[i]
+        R_g = args.rg_kpc[i]
+        z_g = args.zg_kpc[i]
+        a_bulge = args.bulge_a_kpc[i]
+
+        m_disc_star = m_star * dt_ratio
+        m_bulge = m_star * (1 - dt_ratio)
+        N_bulge = int(round(m_bulge / args.m_part_msun))
+
+        # Handle DM
+        if galaxy_pos_mass_data["dm"]["pos"].size > 0:
+            pos_dm = galaxy_pos_mass_data["dm"]["pos"]
+            vx_dm, vy_dm, vz_dm = sample_halo_velocities(
+                pos_dm[:,0], pos_dm[:,1], pos_dm[:,2], rng, grid_solver
+            )
+            dm_vels = np.vstack([dm_vels, np.column_stack([vx_dm, vy_dm, vz_dm])])
+
+        # Handle Gas
+        if galaxy_pos_mass_data["gas"]["pos"].size > 0:
+            pos_gas = galaxy_pos_mass_data["gas"]["pos"]
+            # Pass original component mass and scale length for sigma_surf calc
+            vx_gas, vy_gas, vz_gas = sample_disc_velocities(
+                pos_gas[:,0], pos_gas[:,1], pos_gas[:,2],
+                M_disc=m_gas, R_d=R_g, z_d=z_g,
+                Q_target=args.q_gas,
+                rng=rng, grid_solver=grid_solver,
+                spiral_params={ # Pass spiral/bar params as they are per galaxy
+                    "n_arms": args.n_arms[i], "pitch_deg": args.pitch_deg[i],
+                    "arm_strength": args.arm_strength[i], "stream_frac": args.arm_stream_frac[i]},
+                bar_params={
+                    "enabled": args.bar[i]>0, "radius": args.bar_r_kpc[i], "q": args.bar_q[i],
+                    "stream_frac": args.bar_stream_frac[i]},
+                is_gas=True
+            )
+            gas_vels = np.vstack([gas_vels, np.column_stack([vx_gas, vy_gas, vz_gas])])
+        
+        # Handle Stars (disc + bulge)
+        if galaxy_pos_mass_data["stars"]["pos"].size > 0:
+            pos_star_all = galaxy_pos_mass_data["stars"]["pos"]
+            N_star_total = len(pos_star_all)
+
+            # Split into disc and bulge (original counts from generate_galaxy_positions)
+            N_disc_star_orig = int(round(m_disc_star / args.m_part_msun))
+            pos_disc_star = pos_star_all[:N_disc_star_orig]
+            pos_bulge_star = pos_star_all[N_disc_star_orig:]
+            
+            vx_disc_star, vy_disc_star, vz_disc_star = sample_disc_velocities(
+                pos_disc_star[:,0], pos_disc_star[:,1], pos_disc_star[:,2],
+                M_disc=m_disc_star, R_d=R_d, z_d=z_d,
+                Q_target=args.q_star,
+                rng=rng, grid_solver=grid_solver,
+                spiral_params={ # Pass spiral/bar params as they are per galaxy
+                    "n_arms": args.n_arms[i], "pitch_deg": args.pitch_deg[i],
+                    "arm_strength": args.arm_strength[i], "stream_frac": args.arm_stream_frac[i]},
+                bar_params={
+                    "enabled": args.bar[i]>0, "radius": args.bar_r_kpc[i], "q": args.bar_q[i],
+                    "stream_frac": args.bar_stream_frac[i]},
+                is_gas=False
+            )
+            
+            if N_bulge > 0:
+                vx_bulge, vy_bulge, vz_bulge = sample_bulge_velocities(
+                    pos_bulge_star[:,0], pos_bulge_star[:,1], pos_bulge_star[:,2],
+                    rng=rng, grid_solver=grid_solver
+                )
+            else:
+                vx_bulge = vy_bulge = vz_bulge = np.array([]).reshape(0)
+
+            vx_star = np.concatenate([vx_disc_star, vx_bulge])
+            vy_star = np.concatenate([vy_disc_star, vy_bulge])
+            vz_star = np.concatenate([vz_disc_star, vz_bulge])
+            
+            stars_vels = np.vstack([stars_vels, np.column_stack([vx_star, vy_star, vz_star])])
+
+    # Combine all particles (positions, velocities, masses)
+    combined_data_final = {
+        "dm": {"pos": final_pos_mass_data["dm"]["pos"], "vel": dm_vels, "mass": final_pos_mass_data["dm"]["mass"]},
+        "gas": {"pos": final_pos_mass_data["gas"]["pos"], "vel": gas_vels, "mass": final_pos_mass_data["gas"]["mass"]},
+        "stars": {"pos": final_pos_mass_data["stars"]["pos"], "vel": stars_vels, "mass": final_pos_mass_data["stars"]["mass"]},
+    }
+
+    # 6. Write IC file
     print("\n" + "=" * 70)
     print("WRITING OUTPUT FILES")
     print("=" * 70)
@@ -792,9 +854,9 @@ def main():
         "stars": sum(args.m_star_msun),
     }
 
-    write_swift_ic(args.out_ics, args.box_kpc, combined_data)
+    write_swift_ic(args.out_ics, args.box_kpc, combined_data_final)
 
-    print_ic_summary(combined_data, requested_masses, args.box_kpc)
+    print_ic_summary(combined_data_final, requested_masses, args.box_kpc)
 
     # Write YAML parameter file
     print(f"Writing YAML parameter file: {args.out_params}")
