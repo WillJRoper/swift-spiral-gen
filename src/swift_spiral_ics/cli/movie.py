@@ -76,8 +76,7 @@ def render_snapshot(
                 parallel=True,
                 region=region
             )
-            combined_density += dm_map.value * 0.1 # Lower weight for DM as it's typically more diffuse
-
+            combined_density += dm_map.value * 1.0 # Increased weight for DM to 1.0
 
     # Plot density
     extent = [0, box_size, 0, box_size]
@@ -270,6 +269,12 @@ def main():
 
     for snap_file in tqdm(snapshot_files, desc="Loading and Rendering Snapshots"):
         data = swiftsimio.load(str(snap_file))
+        
+        # Debugging: check if DM data is loaded
+        if hasattr(data, "dm") and hasattr(data.dm, "coordinates"):
+            print(f"  Loaded DM particles: {len(data.dm.coordinates)} (total mass: {np.sum(data.dm.masses).to('Msun'):.2e})")
+        else:
+            print("  No DM particles found in swiftsimio data object.")
         
         if args.separate_movies:
             for comp in components_to_render:
