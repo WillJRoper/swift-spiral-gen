@@ -48,14 +48,13 @@ def render_snapshot(
     
     if render_component == "gas" or render_component == "combined":
         if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
-            print(f"    Rendering gas (histogram)...")
+            print(f"    Rendering gas (SPH)...") # Revert to SPH
             gas_map = project_pixel_grid(
                 data=data.gas,
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region,
-                backend="histogram" # Temporarily force histogram for speed diagnosis
+                region=region
             )
             combined_density += gas_map.value * 1.0 # Weight 1.0
 
@@ -81,7 +80,8 @@ def render_snapshot(
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region
+                region=region,
+                backend="sph" # Explicitly request SPH backend for DM
             )
             combined_density += dm_map.value * 1.0 # Increased weight for DM to 1.0
 
