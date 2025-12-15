@@ -12,14 +12,6 @@ def write_swift_ic(
     box_size: float,
     particle_data: dict[str, dict[str, np.ndarray]],
 ) -> None:
-    """Write SWIFT-compatible HDF5 initial conditions file.
-
-    Args:
-        filename: Output HDF5 filename.
-        box_size: Simulation box size (kpc).
-        particle_data: Dict with keys 'dm', 'gas', 'stars', each containing
-                      'pos' (N,3), 'vel' (N,3), 'mass' (N) arrays.
-    """
     # Convert to cosmological SWIFT units (Mpc, 1e10 Msun)
     length_conv = 1.0 / 1000.0  # kpc -> Mpc
     mass_conv = 1.0 / 1e10  # Msun -> 1e10 Msun
@@ -58,7 +50,6 @@ def write_swift_ic(
         units.attrs["Unit time in cgs (U_t)"] = 3.085678e19  # s so that 1 velocity unit = 1 km/s
         units.attrs["Unit current in cgs (U_I)"] = 1.0
         units.attrs["Unit temperature in cgs (U_T)"] = 1.0
-
         # Particle ID counter
         current_id = 1
 

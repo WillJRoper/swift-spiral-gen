@@ -529,6 +529,11 @@ def main():
     )
     print(f"ICs written to {args.out_ics}.")
 
+    # Determine minimum gas particle mass for splitting threshold
+    min_gas_mass = None
+    if initial_combined_data["gas"]["mass"].size > 0:
+        min_gas_mass = np.min(initial_combined_data["gas"]["mass"])
+
     print(f"Generating parameter file {args.out_params}...")
     params = generate_swift_params(
         ic_filename=args.out_ics,
@@ -540,6 +545,7 @@ def main():
         output_basename=args.snapshot_basename,
         run_name=args.run_name,
         param_template=args.param_template,
+        min_gas_mass_msun=min_gas_mass,
     )
     with open(args.out_params, "w") as f:
         f.write(params)

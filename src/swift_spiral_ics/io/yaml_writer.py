@@ -32,6 +32,8 @@ def _load_template_text(template_name: str) -> str:
     return template_path.read_text(encoding="utf-8")
 
 
+import re # Add import
+
 def generate_swift_params(
     ic_filename: str,
     box_size: float,
@@ -42,11 +44,48 @@ def generate_swift_params(
     output_basename: str = "snapshot",
     run_name: str | None = None,
     param_template: str = "eagle_ref_cosmo",
+    min_gas_mass_msun: float | None = None,
 ) -> str:
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
     snapshot_dt_gyr = snapshot_dt_myr / 1000.0
-    softening_mpc = softening_kpc / 1000.0
+    # Softening now in Mpc
+    softening_mpc_val = softening_kpc / 1000.0
+
+    # Remove Cosmology section to ensure non-cosmological run
+    template_text = re.sub(r'(?m)^# Cosmological parameters\nCosmology:.*?(?=^# Parameters)', '', template_text, flags=re.DOTALL)
+    
+    # Set periodic to 0
+    template_text = re.sub(r'periodic:\s*1', 'periodic:   0', template_text)
+
+    # Update SPH Parameters for Unit System (Mpc, 1e10 Msun)
+    
+    # 1. h_max: Set to half box size, converted to Mpc
+    h_max_val = box_size / 2.0 / 1000.0 # box_size is in kpc, convert to Mpc
+    template_text = re.sub(r'h_max:\s*[\d.eE+-]+', f'h_max:                             {h_max_val}', template_text)
+    
+    # 2. Particle Splitting Threshold
+    # Default to a huge number if mass unknown (effectively disable)
+    splitting_threshold_internal_units = 1e5 
+    if min_gas_mass_msun is not None and min_gas_mass_msun > 0:
+        # min_gas_mass_msun is in Msun. Convert to 1e10 Msun units.
+        splitting_threshold_internal_units = 4.0 * min_gas_mass_msun / 1e10
+    
+    template_text = re.sub(r'particle_splitting_mass_threshold:\s*[\d.eE+-]+', f'particle_splitting_mass_threshold: {splitting_threshold_internal_units:.4e}', template_text)
+
+    # Inject InternalUnitSystem (Mpc, 1e10 Msun, km/s)
+    new_units = """InternalUnitSystem:
+  UnitMass_in_cgs:     1.98841e43    # 10^10 M_sun in grams
+  UnitLength_in_cgs:   3.08567758e24 # Mpc in centimeters
+  UnitVelocity_in_cgs: 1e5           # km/s in centimeters per second
+  UnitCurrent_in_cgs:  1.0           # Amperes
+  UnitTemp_in_cgs:     1.0           # Kelvin"""
+    
+    if "InternalUnitSystem:" in template_text:
+        template_text = re.sub(r'(?m)^InternalUnitSystem:.*?(\n\S|\Z)', f'{new_units}\n\\1', template_text, flags=re.DOTALL)
+    else:
+        # Prepend if not found (unlikely)
+        template_text = new_units + "\n\n" + template_text
 
     replacements = {
         "__RUN_NAME__": run_name or "swift_spiral_run",
@@ -55,7 +94,7 @@ def generate_swift_params(
         "__SNAP_DT__": f"{snapshot_dt_gyr}",
         "__STAT_DT__": f"{snapshot_dt_gyr}",
         "__DT_MIN_GYR__": f"{dt_min_gyr}",
-        "__SOFTENING__": f"{softening_mpc}",
+        "__SOFTENING__": f"{softening_mpc_val}",
     }
 
     for token, value in replacements.items():

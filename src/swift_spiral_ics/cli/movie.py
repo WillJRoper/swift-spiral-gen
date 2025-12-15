@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 def render_snapshot(
     data: swiftsimio.SWIFTDataset,
-    bins: int = 512,
+    bins: int = 256,
     show_vel: bool = False,
     vel_subsample: int = 500,
     render_component: str = "combined",
@@ -29,53 +29,59 @@ def render_snapshot(
         data: Loaded swiftsimio dataset.
         bins: Number of bins for density projection.
         show_vel: If True, overlay velocity vectors.
-        vel_subsample: Number of particles to show for velocity field.
+        vel_subsample: Number of particles for velocity field.
         render_component: Which component to render ('gas', 'stars', 'dm', or 'combined').
 
     Returns:
         RGB image array (H, W, 3).
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-    box_size_unyt = data.metadata.boxsize[0].to("kpc")
-    box_size = box_size_unyt.value
+    # Use native units of the data (Mpc)
+    box_size_unyt = data.metadata.boxsize[0] # This will be in Mpc
+    box_size = box_size_unyt.value # This will be the float value in Mpc
 
     # Project density map
     combined_density = np.zeros((bins, bins))
     
-    # Define grid with units
-    region = [0 * unyt.kpc, box_size_unyt, 0 * unyt.kpc, box_size_unyt] 
+    # Define grid with units in Mpc
+    region = [0 * unyt.Mpc, box_size_unyt, 0 * unyt.Mpc, box_size_unyt] 
     
     if render_component == "gas" or render_component == "combined":
         if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
+            print(f"    Rendering gas (histogram)...")
             gas_map = project_pixel_grid(
                 data=data.gas,
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region
+                region=region,
+                backend="histogram" # Temporarily force histogram for speed diagnosis
             )
             combined_density += gas_map.value * 1.0 # Weight 1.0
 
     if render_component == "stars" or render_component == "combined":
         if hasattr(data, "stars") and len(data.stars.coordinates) > 0:
+            print(f"    Rendering stars (histogram)...")
+            # Use histogram for stars - much faster and usually sufficient
             star_map = project_pixel_grid(
                 data=data.stars,
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region
+                region=region,
+                backend="histogram" 
             )
             combined_density += star_map.value * 0.5 # Weight 0.5
 
     if render_component == "dm" or render_component == "combined":
         if hasattr(data, "dark_matter") and len(data.dark_matter.coordinates) > 0:
+            print(f"    Rendering DM (SPH - calculating smoothing lengths)...")
             dm_map = project_pixel_grid(
                 data=data.dark_matter,
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region,
-                backend="histogram" # Force histogram for DM as it has no smoothing length
+                region=region
             )
             combined_density += dm_map.value * 1.0 # Increased weight for DM to 1.0
 
@@ -128,8 +134,8 @@ def render_snapshot(
         bbox={"boxstyle": "round", "facecolor": "black", "alpha": 0.5},
     )
 
-    ax.set_xlabel("x (kpc)")
-    ax.set_ylabel("y (kpc)")
+    ax.set_xlabel("x (Mpc)")
+    ax.set_ylabel("y (Mpc)")
     ax.set_xlim(0, box_size)
     ax.set_ylim(0, box_size)
 
@@ -224,7 +230,7 @@ def main():
     parser.add_argument("--out-movie", type=str, default="movie.mp4", help="Output movie file")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second")
     parser.add_argument(
-        "--bins", type=int, default=512, help="Number of bins for density projection"
+        "--bins", type=int, default=256, help="Number of bins for density projection"
     )
     parser.add_argument("--show-vel", action="store_true", help="Show velocity field overlay")
     parser.add_argument(
