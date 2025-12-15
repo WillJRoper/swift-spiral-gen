@@ -277,6 +277,13 @@ def main():
     for snap_file in tqdm(snapshot_files, desc="Loading and Rendering Snapshots"):
         data = swiftsimio.load(str(snap_file))
         
+        # Explicitly generate smoothing lengths for DM if not present, as requested
+        if hasattr(data, "dark_matter") and not hasattr(data.dark_matter, "smoothing_length"):
+            print(f"    Generating smoothing lengths for DM particles...")
+            # swiftsimio's generate_smoothing_lengths uses a default N_ngb=58 for SPH
+            data.dark_matter.generate_smoothing_lengths()
+            print(f"    DM smoothing lengths generated.")
+        
         # Debugging: check if DM data is loaded
         if hasattr(data, "dark_matter") and hasattr(data.dark_matter, "coordinates"):
             print(f"  Loaded DM particles: {len(data.dark_matter.coordinates)} (total mass: {np.sum(data.dark_matter.masses).to('Msun'):.2e})")
