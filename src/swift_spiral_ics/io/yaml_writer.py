@@ -49,6 +49,7 @@ def generate_swift_params(
     param_template: str = "eagle_ref_cosmo",
     min_gas_mass_msun: float | None = None,
     feedback_scale: float = 1.0,
+    h_max_cell_fraction: float = _H_MAX_CELL_FRACTION,
 ) -> str:
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
@@ -77,8 +78,11 @@ def generate_swift_params(
     # 1. h_max: Keep this comfortably below the top-level cell size used by the
     # shipped scheduler settings to avoid SWIFT trying to coarsen the mesh
     # during setup for isolated galaxy runs.
+    if h_max_cell_fraction <= 0:
+        raise ValueError("h_max_cell_fraction must be positive")
+
     cell_width_kpc = box_size / _MAX_TOP_LEVEL_CELLS
-    h_max_val = _H_MAX_CELL_FRACTION * cell_width_kpc / 1000.0  # convert from kpc to Mpc
+    h_max_val = h_max_cell_fraction * cell_width_kpc / 1000.0  # convert from kpc to Mpc
     template_text = re.sub(
         r"h_max:\s*[\d.eE+-]+", f"h_max:                             {h_max_val}", template_text
     )

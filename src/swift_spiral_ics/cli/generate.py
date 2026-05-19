@@ -834,6 +834,12 @@ def main():
     parser.add_argument(
         "--eps-grid", type=float, default=0.1, help="Softening length for grid potential solver in kpc."
     )
+    parser.add_argument(
+        "--h-max-cell-fraction",
+        type=float,
+        default=0.5,
+        help="Set h_max to this fraction of the top-level cell width in the generated SWIFT YAML.",
+    )
 
     # Background properties
     parser.add_argument(
@@ -965,6 +971,7 @@ def main():
         param_template=args.param_template,
         min_gas_mass_msun=min_gas_mass,
         feedback_scale=args.feedback_scale,
+        h_max_cell_fraction=args.h_max_cell_fraction,
     )
     with open(args.out_params, "w") as f:
         f.write(params)

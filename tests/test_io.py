@@ -247,6 +247,16 @@ class TestYamlWriter:
         assert "run_name:   custom-run" in params
         assert "delta_time:          5.113560131679326e-06" in params
 
+    def test_generate_swift_params_custom_h_max_fraction(self):
+        """Custom h_max cell fraction is reflected in the YAML."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=1600.0,
+            h_max_cell_fraction=0.8,
+        )
+
+        assert "h_max:                             0.08" in params
+
     def test_write_yaml_file(self):
         """Test YAML file writing."""
         with tempfile.TemporaryDirectory() as tmpdir:
