@@ -22,9 +22,9 @@ Cosmology:
 # Parameters governing the time integration
 TimeIntegration:
   dt_min: __DT_MIN_GYR__
-  dt_max:     1e-2  # The maximal time-step size of the simulation (in internal units).
+  dt_max:     __DT_MAX_GYR__  # The maximal time-step size of the simulation (in internal units).
   time_begin: 0.0
-  time_end:   10
+  time_end:   __TIME_END__
   
 # Parameters governing the snapshots
 Snapshots:
@@ -134,7 +134,7 @@ EAGLECooling:
 
 # PS2020 cooling parameters
 PS2020Cooling:
-  dir_name:                ./UV_dust1_CR1_G1_shield1.hdf5 # Location of the cooling tables
+  dir_name:                ./data/UV_dust1_CR1_G1_shield1.hdf5 # Location of the cooling tables
   H_reion_z:               7.5               # Redshift of Hydrogen re-ionization (Planck 2018)
   H_reion_eV_p_H:          2.0
   He_reion_z_centre:       3.5               # Redshift of the centre of the Helium re-ionization Gaussian

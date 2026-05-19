@@ -13,6 +13,7 @@ import numpy as np
 import swiftsimio
 import unyt
 from swiftsimio.visualisation.projection import project_pixel_grid
+from swiftsimio.visualisation.smoothing_length.generate import generate_smoothing_lengths
 from tqdm import tqdm
 
 
@@ -74,14 +75,14 @@ def render_snapshot(
 
     if render_component == "dm" or render_component == "combined":
         if hasattr(data, "dark_matter") and len(data.dark_matter.coordinates) > 0:
-            print(f"    Rendering DM (SPH - calculating smoothing lengths)...")
+            print(f"    Rendering DM (SPH/subsampled)...")
             dm_map = project_pixel_grid(
                 data=data.dark_matter,
                 resolution=bins,
                 project="masses",
                 parallel=True,
                 region=region,
-                backend="sph" # Explicitly request SPH backend for DM
+                backend="subsampled" # Use subsampled backend which uses smoothing lengths
             )
             combined_density += dm_map.value * 1.0 # Increased weight for DM to 1.0
 
@@ -277,11 +278,17 @@ def main():
     for snap_file in tqdm(snapshot_files, desc="Loading and Rendering Snapshots"):
         data = swiftsimio.load(str(snap_file))
         
-        # Explicitly generate smoothing lengths for DM if not present, as requested
+        # Explicitly generate smoothing lengths for DM if not present
         if hasattr(data, "dark_matter") and not hasattr(data.dark_matter, "smoothing_length"):
             print(f"    Generating smoothing lengths for DM particles...")
             # swiftsimio's generate_smoothing_lengths uses a default N_ngb=58 for SPH
-            data.dark_matter.generate_smoothing_lengths()
+            h = generate_smoothing_lengths(
+                data.dark_matter.coordinates,
+                boxsize=data.metadata.boxsize,
+                kernel_gamma=1.8,
+                neighbours=58
+            )
+            data.dark_matter.smoothing_length = h
             print(f"    DM smoothing lengths generated.")
         
         # Debugging: check if DM data is loaded

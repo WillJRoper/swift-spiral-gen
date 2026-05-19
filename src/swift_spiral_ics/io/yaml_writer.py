@@ -7,15 +7,19 @@ cadence. Everything else stays verbatim to avoid SWIFT parser issues.
 
 from __future__ import annotations
 
+import re
 from importlib import resources
-from typing import List
-
 
 _TEMPLATE_PACKAGE = "swift_spiral_ics.templates"
 _TEMPLATE_SUFFIXES = (".yml", ".yaml")
+_SECONDS_PER_GYR = 3.15576e16
+_UNIT_TIME_SECONDS = 3.085678e19  # Mpc / (km/s)
+_GYR_PER_INTERNAL_TIME = _UNIT_TIME_SECONDS / _SECONDS_PER_GYR
+_MAX_TOP_LEVEL_CELLS = 16
+_H_MAX_CELL_FRACTION = 0.5
 
 
-def available_param_templates() -> List[str]:
+def available_param_templates() -> list[str]:
     template_dir = resources.files(_TEMPLATE_PACKAGE)
     return sorted(
         path.stem for path in template_dir.iterdir() if path.suffix in _TEMPLATE_SUFFIXES
@@ -32,15 +36,14 @@ def _load_template_text(template_name: str) -> str:
     return template_path.read_text(encoding="utf-8")
 
 
-import re # Add import
-
 def generate_swift_params(
     ic_filename: str,
     box_size: float,
-    time_end_gyr: float,
-    snapshot_dt_myr: float,
-    dt_min_gyr: float,
-    softening_kpc: float,
+    time_end_gyr: float = 1.0,
+    snapshot_dt_myr: float = 10.0,
+    dt_min_gyr: float = 1e-5,
+    dt_max_gyr: float | None = None,
+    softening_kpc: float = 0.1,
     output_basename: str = "snapshot",
     run_name: str | None = None,
     param_template: str = "eagle_ref_cosmo",
@@ -48,30 +51,49 @@ def generate_swift_params(
 ) -> str:
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
-    snapshot_dt_gyr = snapshot_dt_myr / 1000.0
+    ic_filename = str(ic_filename)
+    time_end_internal = time_end_gyr / _GYR_PER_INTERNAL_TIME
+    snapshot_dt_internal = (snapshot_dt_myr / 1000.0) / _GYR_PER_INTERNAL_TIME
+    dt_min_internal = dt_min_gyr / _GYR_PER_INTERNAL_TIME
     # Softening now in Mpc
     softening_mpc_val = softening_kpc / 1000.0
+    dt_max_gyr = min(dt_max_gyr if dt_max_gyr is not None else time_end_gyr, time_end_gyr)
+    dt_max_internal = dt_max_gyr / _GYR_PER_INTERNAL_TIME
 
     # Remove Cosmology section to ensure non-cosmological run
-    template_text = re.sub(r'(?m)^# Cosmological parameters\nCosmology:.*?(?=^# Parameters)', '', template_text, flags=re.DOTALL)
-    
+    template_text = re.sub(
+        r"(?m)^# Cosmological parameters\nCosmology:.*?(?=^# Parameters)",
+        "",
+        template_text,
+        flags=re.DOTALL,
+    )
+
     # Set periodic to 0
-    template_text = re.sub(r'periodic:\s*1', 'periodic:   0', template_text)
+    template_text = re.sub(r"periodic:\s*1", "periodic:   0", template_text)
 
     # Update SPH Parameters for Unit System (Mpc, 1e10 Msun)
-    
-    # 1. h_max: Set to half box size, converted to Mpc
-    h_max_val = box_size / 2.0 / 1000.0 # box_size is in kpc, convert to Mpc
-    template_text = re.sub(r'h_max:\s*[\d.eE+-]+', f'h_max:                             {h_max_val}', template_text)
-    
+
+    # 1. h_max: Keep this comfortably below the top-level cell size used by the
+    # shipped scheduler settings to avoid SWIFT trying to coarsen the mesh
+    # during setup for isolated galaxy runs.
+    cell_width_kpc = box_size / _MAX_TOP_LEVEL_CELLS
+    h_max_val = _H_MAX_CELL_FRACTION * cell_width_kpc / 1000.0  # convert from kpc to Mpc
+    template_text = re.sub(
+        r"h_max:\s*[\d.eE+-]+", f"h_max:                             {h_max_val}", template_text
+    )
+
     # 2. Particle Splitting Threshold
     # Default to a huge number if mass unknown (effectively disable)
-    splitting_threshold_internal_units = 1e5 
+    splitting_threshold_internal_units = 1e5
     if min_gas_mass_msun is not None and min_gas_mass_msun > 0:
         # min_gas_mass_msun is in Msun. Convert to 1e10 Msun units.
         splitting_threshold_internal_units = 4.0 * min_gas_mass_msun / 1e10
-    
-    template_text = re.sub(r'particle_splitting_mass_threshold:\s*[\d.eE+-]+', f'particle_splitting_mass_threshold: {splitting_threshold_internal_units:.4e}', template_text)
+
+    template_text = re.sub(
+        r"particle_splitting_mass_threshold:\s*[\d.eE+-]+",
+        f"particle_splitting_mass_threshold: {splitting_threshold_internal_units:.4e}",
+        template_text,
+    )
 
     # Inject InternalUnitSystem (Mpc, 1e10 Msun, km/s)
     new_units = """InternalUnitSystem:
@@ -80,9 +102,14 @@ def generate_swift_params(
   UnitVelocity_in_cgs: 1e5           # km/s in centimeters per second
   UnitCurrent_in_cgs:  1.0           # Amperes
   UnitTemp_in_cgs:     1.0           # Kelvin"""
-    
+
     if "InternalUnitSystem:" in template_text:
-        template_text = re.sub(r'(?m)^InternalUnitSystem:.*?(\n\S|\Z)', f'{new_units}\n\\1', template_text, flags=re.DOTALL)
+        template_text = re.sub(
+            r"(?m)^InternalUnitSystem:.*?(\n\S|\Z)",
+            f"{new_units}\n\\1",
+            template_text,
+            flags=re.DOTALL,
+        )
     else:
         # Prepend if not found (unlikely)
         template_text = new_units + "\n\n" + template_text
@@ -91,9 +118,11 @@ def generate_swift_params(
         "__RUN_NAME__": run_name or "swift_spiral_run",
         "__IC_FILE__": ic_filename,
         "__SNAP_BASENAME__": output_basename,
-        "__SNAP_DT__": f"{snapshot_dt_gyr}",
-        "__STAT_DT__": f"{snapshot_dt_gyr}",
-        "__DT_MIN_GYR__": f"{dt_min_gyr}",
+        "__SNAP_DT__": f"{snapshot_dt_internal}",
+        "__STAT_DT__": f"{snapshot_dt_internal}",
+        "__DT_MIN_GYR__": f"{dt_min_internal}",
+        "__DT_MAX_GYR__": f"{dt_max_internal}",
+        "__TIME_END__": f"{time_end_internal}",
         "__SOFTENING__": f"{softening_mpc_val}",
     }
 

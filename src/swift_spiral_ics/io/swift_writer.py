@@ -11,6 +11,7 @@ def write_swift_ic(
     filename: str,
     box_size: float,
     particle_data: dict[str, dict[str, np.ndarray]],
+    m_part: float | None = None,
 ) -> None:
     # Convert to cosmological SWIFT units (Mpc, 1e10 Msun)
     length_conv = 1.0 / 1000.0  # kpc -> Mpc
@@ -61,7 +62,7 @@ def write_swift_ic(
             pos = np.mod(gas_data["pos"], box_size)
             pos = _jitter_duplicates(pos, rng_jitter)
             vel = gas_data["vel"]
-            mass = gas_data["mass"]
+            mass, gas_mass_conv = _get_mass_array(gas_data, N_gas, m_part, mass_conv)
 
             # Wrap positions into box
             pos_wrapped = np.mod(pos, box_size)
@@ -70,7 +71,7 @@ def write_swift_ic(
             )
             gas_group.create_dataset("Velocities", data=vel.astype(np.float32))
             gas_group.create_dataset(
-                "Masses", data=(mass * mass_conv).astype(np.float32)
+                "Masses", data=(mass * gas_mass_conv).astype(np.float32)
             )
             gas_group.create_dataset(
                 "ParticleIDs", data=np.arange(current_id, current_id + N_gas, dtype=np.uint64)
@@ -93,7 +94,7 @@ def write_swift_ic(
             pos = np.mod(dm_data["pos"], box_size)
             pos = _jitter_duplicates(pos, rng_jitter)
             vel = dm_data["vel"]
-            mass = dm_data["mass"]
+            mass, dm_mass_conv = _get_mass_array(dm_data, N_dm, m_part, mass_conv)
 
             # Wrap positions into box
             pos_wrapped = np.mod(pos, box_size)
@@ -102,7 +103,7 @@ def write_swift_ic(
             )
             dm_group.create_dataset("Velocities", data=vel.astype(np.float32))
             dm_group.create_dataset(
-                "Masses", data=(mass * mass_conv).astype(np.float32)
+                "Masses", data=(mass * dm_mass_conv).astype(np.float32)
             )
             dm_group.create_dataset(
                 "ParticleIDs", data=np.arange(current_id, current_id + N_dm, dtype=np.uint64)
@@ -117,7 +118,7 @@ def write_swift_ic(
             pos = np.mod(star_data["pos"], box_size)
             pos = _jitter_duplicates(pos, rng_jitter)
             vel = star_data["vel"]
-            mass = star_data["mass"]
+            mass, star_mass_conv = _get_mass_array(star_data, N_stars, m_part, mass_conv)
 
             # Wrap positions into box
             pos_wrapped = np.mod(pos, box_size)
@@ -126,7 +127,7 @@ def write_swift_ic(
             )
             star_group.create_dataset("Velocities", data=vel.astype(np.float32))
             star_group.create_dataset(
-                "Masses", data=(mass * mass_conv).astype(np.float32)
+                "Masses", data=(mass * star_mass_conv).astype(np.float32)
             )
             star_group.create_dataset(
                 "ParticleIDs", data=np.arange(current_id, current_id + N_stars, dtype=np.uint64)
@@ -149,6 +150,19 @@ def write_swift_ic(
             star_group.create_dataset(
                 "SmoothingLength", data=(h_star * length_conv).astype(np.float32)
             )
+
+
+def _get_mass_array(
+    particle_type_data: dict[str, np.ndarray],
+    n_particles: int,
+    m_part: float | None,
+    mass_conv: float,
+) -> tuple[np.ndarray, float]:
+    if "mass" in particle_type_data:
+        return np.asarray(particle_type_data["mass"], dtype=float), mass_conv
+    if m_part is None:
+        raise ValueError("Particle data must include 'mass' arrays unless m_part is supplied")
+    return np.full(n_particles, m_part, dtype=float), 1.0
 
 
 def compute_internal_energy(T: float) -> float:

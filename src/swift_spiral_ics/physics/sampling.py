@@ -120,6 +120,7 @@ def sample_hernquist_bulge(
     m_bulge: float,
     a: float,
     rng: np.random.Generator,
+    r_max: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample particle positions for Hernquist bulge.
 
@@ -128,12 +129,17 @@ def sample_hernquist_bulge(
         m_bulge: Total bulge mass (Msun).
         a: Hernquist scale length (kpc).
         rng: Random number generator.
+        r_max: Optional truncation radius (kpc).
 
     Returns:
         Tuple of (x, y, z) positions (kpc).
     """
-    # Inverse CDF for Hernquist: r = a * sqrt(u) / (1 - sqrt(u))
-    u = rng.uniform(0, 1, N)
+    # Inverse CDF for Hernquist: r = a * sqrt(u) / (1 - sqrt(u)).
+    # If truncated, draw only up to F(r_max) and renormalize by construction.
+    u_max = 1.0
+    if r_max is not None:
+        u_max = (r_max / (r_max + a)) ** 2
+    u = rng.uniform(0, u_max, N)
     sqrt_u = np.sqrt(u)
     r = a * sqrt_u / (1 - sqrt_u)
 

@@ -53,7 +53,7 @@ double potential_of_ring(double M_ring, double R_src, double z_src, double R_des
 
     double K_val = my_ellipk(std::sqrt(k_sq));
 
-    return -G_val * M_ring / (PI * std::sqrt(A_sq)) * K_val;
+    return -2.0 * G_val * M_ring / (PI * std::sqrt(A_sq)) * K_val;
 }
 
 

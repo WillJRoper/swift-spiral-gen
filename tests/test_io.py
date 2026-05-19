@@ -234,7 +234,7 @@ class TestYamlWriter:
         )
 
         assert "run_name:   custom-run" in params
-        assert "delta_time:          0.005" in params
+        assert "delta_time:          5.113560131679326e-06" in params
 
     def test_write_yaml_file(self):
         """Test YAML file writing."""
