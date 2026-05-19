@@ -24,92 +24,193 @@ from ..utils.random import get_rng
 G_KPC_KMS2_MSUN = 4.302e-6
 
 
+def _get_galaxy_value(values: list[float] | list[int], galaxy_id: int) -> float | int:
+    return values[galaxy_id]
+
+
+def _resolve_per_galaxy_values(
+    values: list[float] | list[int],
+    n_galaxies: int,
+    name: str,
+) -> list[float] | list[int]:
+    if len(values) == n_galaxies:
+        return values
+    if len(values) == 1:
+        return [values[0]] * n_galaxies
+    raise ValueError(f"{name} expects 1 or {n_galaxies} values, got {len(values)}")
+
+
+def _normalise_per_galaxy_args(args: argparse.Namespace) -> None:
+    if args.n_galaxies < 1:
+        raise ValueError("--n-galaxies must be at least 1")
+
+    args.n_halo = _resolve_per_galaxy_values(args.n_halo, args.n_galaxies, "--n-halo")
+    args.m200_msun = _resolve_per_galaxy_values(args.m200_msun, args.n_galaxies, "--m200-msun")
+    args.c200 = _resolve_per_galaxy_values(args.c200, args.n_galaxies, "--c200")
+    args.n_bulge = _resolve_per_galaxy_values(args.n_bulge, args.n_galaxies, "--n-bulge")
+    args.m_bulge_msun = _resolve_per_galaxy_values(args.m_bulge_msun, args.n_galaxies, "--m-bulge-msun")
+    args.bulge_a_kpc = _resolve_per_galaxy_values(args.bulge_a_kpc, args.n_galaxies, "--bulge-a-kpc")
+    args.bulge_rmax_scale = _resolve_per_galaxy_values(
+        args.bulge_rmax_scale, args.n_galaxies, "--bulge-rmax-scale"
+    )
+    args.n_star = _resolve_per_galaxy_values(args.n_star, args.n_galaxies, "--n-star")
+    args.m_star_msun = _resolve_per_galaxy_values(args.m_star_msun, args.n_galaxies, "--m-star-msun")
+    args.rd_kpc = _resolve_per_galaxy_values(args.rd_kpc, args.n_galaxies, "--rd-kpc")
+    args.zd_kpc = _resolve_per_galaxy_values(args.zd_kpc, args.n_galaxies, "--zd-kpc")
+    args.Q_star = _resolve_per_galaxy_values(args.Q_star, args.n_galaxies, "--Q-star")
+    args.n_gas = _resolve_per_galaxy_values(args.n_gas, args.n_galaxies, "--n-gas")
+    args.m_gas_msun = _resolve_per_galaxy_values(args.m_gas_msun, args.n_galaxies, "--m-gas-msun")
+    args.rg_kpc = _resolve_per_galaxy_values(args.rg_kpc, args.n_galaxies, "--rg-kpc")
+    args.zg_kpc = _resolve_per_galaxy_values(args.zg_kpc, args.n_galaxies, "--zg-kpc")
+    args.Q_gas = _resolve_per_galaxy_values(args.Q_gas, args.n_galaxies, "--Q-gas")
+    args.n_arms = _resolve_per_galaxy_values(args.n_arms, args.n_galaxies, "--n-arms")
+    args.pitch_deg = _resolve_per_galaxy_values(args.pitch_deg, args.n_galaxies, "--pitch-deg")
+    args.arm_strength = _resolve_per_galaxy_values(
+        args.arm_strength, args.n_galaxies, "--arm-strength"
+    )
+    args.arm_stream_frac = _resolve_per_galaxy_values(
+        args.arm_stream_frac, args.n_galaxies, "--arm-stream-frac"
+    )
+    args.bar_strength = _resolve_per_galaxy_values(
+        args.bar_strength, args.n_galaxies, "--bar-strength"
+    )
+    args.bar_radius = _resolve_per_galaxy_values(
+        args.bar_radius, args.n_galaxies, "--bar-radius"
+    )
+    args.bar_q = _resolve_per_galaxy_values(args.bar_q, args.n_galaxies, "--bar-q")
+    args.bar_angle = _resolve_per_galaxy_values(args.bar_angle, args.n_galaxies, "--bar-angle")
+
+    if args.inclination_deg is not None:
+        args.inclination_deg = _resolve_per_galaxy_values(
+            args.inclination_deg, args.n_galaxies, "--inclination-deg"
+        )
+    else:
+        args.inclination_deg = [0.0] * args.n_galaxies
+
+
+def _resolve_galaxy_triplets(
+    values: list[float] | None,
+    n_galaxies: int,
+    name: str,
+) -> np.ndarray | None:
+    if values is None:
+        return None
+    if len(values) != 3 * n_galaxies:
+        raise ValueError(f"{name} expects {3 * n_galaxies} values, got {len(values)}")
+    return np.asarray(values, dtype=float).reshape(n_galaxies, 3)
+
+
+def _resolve_galaxy_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+    positions = _resolve_galaxy_triplets(args.galaxy_positions_kpc, args.n_galaxies, "--galaxy-positions-kpc")
+    velocities = _resolve_galaxy_triplets(args.galaxy_velocities_kms, args.n_galaxies, "--galaxy-velocities-kms")
+
+    if positions is not None:
+        if velocities is None:
+            velocities = np.zeros((args.n_galaxies, 3), dtype=float)
+        return positions, velocities
+
+    if args.n_galaxies == 1:
+        return np.zeros((1, 3), dtype=float), np.zeros((1, 3), dtype=float)
+
+    raise ValueError("Provide --galaxy-positions-kpc for any multi-galaxy configuration")
+
+
 def generate_galaxy_particles(
     galaxy_id: int,
     args: argparse.Namespace,
     rng: np.random.Generator,
-    mass_scale: float = 1.0,
-    size_scale: float = 1.0,
 ) -> dict:
     """Generate positions, velocities, and masses for a single isolated spiral."""
 
-    m200_msun = args.m200_msun * mass_scale
-    M_star = args.m_star_msun * mass_scale
-    M_gas = args.m_gas_msun * mass_scale
-    m_bulge_msun = args.m_bulge_msun * mass_scale
-    rd_star_kpc = args.rd_kpc * size_scale
-    zd_star_kpc = args.zd_kpc * size_scale
-    rd_gas_kpc = args.rg_kpc * size_scale
-    zd_gas_kpc = args.zg_kpc * size_scale
-    bulge_a_kpc = args.bulge_a_kpc * size_scale
+    m200_msun = _get_galaxy_value(args.m200_msun, galaxy_id)
+    M_star = _get_galaxy_value(args.m_star_msun, galaxy_id)
+    M_gas = _get_galaxy_value(args.m_gas_msun, galaxy_id)
+    m_bulge_msun = _get_galaxy_value(args.m_bulge_msun, galaxy_id)
+    rd_star_kpc = _get_galaxy_value(args.rd_kpc, galaxy_id)
+    zd_star_kpc = _get_galaxy_value(args.zd_kpc, galaxy_id)
+    rd_gas_kpc = _get_galaxy_value(args.rg_kpc, galaxy_id)
+    zd_gas_kpc = _get_galaxy_value(args.zg_kpc, galaxy_id)
+    bulge_a_kpc = _get_galaxy_value(args.bulge_a_kpc, galaxy_id)
 
     # 1. Sample halo positions
-    c200 = args.c200
+    c200 = _get_galaxy_value(args.c200, galaxy_id)
     r_s, _ = nfw_params(m200_msun, c200)
 
     # Calculate truncation radius
     r_max_halo = r_s * 10
 
-    pos_halo = np.zeros((args.n_halo, 3))
-    mass_halo = _component_masses(m200_msun, args.n_halo)
+    n_halo = _get_galaxy_value(args.n_halo, galaxy_id)
+    pos_halo = np.zeros((n_halo, 3))
+    mass_halo = _component_masses(m200_msun, n_halo)
 
-    if args.n_halo > 0:
+    if n_halo > 0:
         x_halo, y_halo, z_halo = sample_nfw_halo(
-            args.n_halo, m200_msun, c200, r_max_halo, rng
+            n_halo, m200_msun, c200, r_max_halo, rng
         )
         pos_halo = np.column_stack([x_halo, y_halo, z_halo])
 
     # 2. Sample bulge positions
-    pos_bulge = np.zeros((args.n_bulge, 3))
-    mass_bulge = _component_masses(m_bulge_msun, args.n_bulge)
+    n_bulge = _get_galaxy_value(args.n_bulge, galaxy_id)
+    pos_bulge = np.zeros((n_bulge, 3))
+    mass_bulge = _component_masses(m_bulge_msun, n_bulge)
 
-    if args.n_bulge > 0:
-        r_max_bulge = args.bulge_rmax_scale * bulge_a_kpc
+    if n_bulge > 0:
+        r_max_bulge = _get_galaxy_value(args.bulge_rmax_scale, galaxy_id) * bulge_a_kpc
         x_bulge, y_bulge, z_bulge = sample_hernquist_bulge(
-            args.n_bulge, m_bulge_msun, bulge_a_kpc, rng, r_max=r_max_bulge
+            n_bulge, m_bulge_msun, bulge_a_kpc, rng, r_max=r_max_bulge
         )
         pos_bulge = np.column_stack([x_bulge, y_bulge, z_bulge])
 
     # 3. Sample stellar disc positions
-    pos_star = np.zeros((args.n_star, 3))
-    mass_star = _component_masses(M_star, args.n_star)
+    n_star = _get_galaxy_value(args.n_star, galaxy_id)
+    pos_star = np.zeros((n_star, 3))
+    mass_star = _component_masses(M_star, n_star)
 
-    if args.n_star > 0:
+    arm_strength = _get_galaxy_value(args.arm_strength, galaxy_id)
+    n_arms = _get_galaxy_value(args.n_arms, galaxy_id)
+    pitch_deg = _get_galaxy_value(args.pitch_deg, galaxy_id)
+    bar_strength = _get_galaxy_value(args.bar_strength, galaxy_id)
+    bar_radius = _get_galaxy_value(args.bar_radius, galaxy_id)
+    bar_q = _get_galaxy_value(args.bar_q, galaxy_id)
+    bar_angle = _get_galaxy_value(args.bar_angle, galaxy_id)
+
+    if n_star > 0:
         x_star, y_star, z_star = sample_exponential_disc(
-            args.n_star, M_star, rd_star_kpc, zd_star_kpc, rng,
+            n_star, M_star, rd_star_kpc, zd_star_kpc, rng,
             spiral_params={
-                "arm_strength": args.arm_strength,
-                "n_arms": args.n_arms,
-                "pitch_deg": args.pitch_deg,
-            } if args.arm_strength > 0 else None,
+                "arm_strength": arm_strength,
+                "n_arms": n_arms,
+                "pitch_deg": pitch_deg,
+            } if arm_strength > 0 else None,
             bar_params={
                 "enabled": args.bar_enabled,
-                "strength": args.bar_strength,
-                "radius": args.bar_radius,
-                "q": args.bar_q,
-                "angle": args.bar_angle,
+                "strength": bar_strength,
+                "radius": bar_radius,
+                "q": bar_q,
+                "angle": bar_angle,
             } if args.bar_enabled else None,
         )
         pos_star = np.column_stack([x_star, y_star, z_star])
 
     # 4. Sample gas disc positions
-    pos_gas = np.zeros((args.n_gas, 3))
-    mass_gas = _component_masses(M_gas, args.n_gas)
+    n_gas = _get_galaxy_value(args.n_gas, galaxy_id)
+    pos_gas = np.zeros((n_gas, 3))
+    mass_gas = _component_masses(M_gas, n_gas)
 
-    if args.n_gas > 0:
+    if n_gas > 0:
         x_gas, y_gas, z_gas = sample_exponential_disc(
-            args.n_gas, M_gas, rd_gas_kpc, zd_gas_kpc, rng,
+            n_gas, M_gas, rd_gas_kpc, zd_gas_kpc, rng,
             spiral_params={
-                "arm_strength": args.arm_strength,
-                "n_arms": args.n_arms,
-                "pitch_deg": args.pitch_deg,
-            } if args.arm_strength > 0 else None,
+                "arm_strength": arm_strength,
+                "n_arms": n_arms,
+                "pitch_deg": pitch_deg,
+            } if arm_strength > 0 else None,
             bar_params={
                 "enabled": args.bar_enabled,
-                "strength": args.bar_strength,
-                "radius": args.bar_radius,
-                "q": args.bar_q,
-                "angle": args.bar_angle,
+                "strength": bar_strength,
+                "radius": bar_radius,
+                "q": bar_q,
+                "angle": bar_angle,
             } if args.bar_enabled else None,
         )
         pos_gas = np.column_stack([x_gas, y_gas, z_gas])
@@ -156,21 +257,21 @@ def generate_galaxy_particles(
         M_star,
         rd_star_kpc,
         zd_star_kpc,
-        args.Q_star,
+        _get_galaxy_value(args.Q_star, galaxy_id),
         rng,
         grid_solver,
         is_gas=False,
         spiral_params={
-            "arm_strength": args.arm_strength,
-            "stream_frac": args.arm_stream_frac,
-            "n_arms": args.n_arms,
-            "pitch_deg": args.pitch_deg,
-        } if args.arm_strength > 0 else None,
+            "arm_strength": arm_strength,
+            "stream_frac": _get_galaxy_value(args.arm_stream_frac, galaxy_id),
+            "n_arms": n_arms,
+            "pitch_deg": pitch_deg,
+        } if arm_strength > 0 else None,
         bar_params={
             "enabled": args.bar_enabled,
-            "stream_frac": args.bar_strength,
-            "radius": args.bar_radius,
-            "angle": args.bar_angle,
+            "stream_frac": bar_strength,
+            "radius": bar_radius,
+            "angle": bar_angle,
         } if args.bar_enabled else None,
     )
     vel_gas = _sample_cylindrical_disc_velocities(
@@ -179,21 +280,21 @@ def generate_galaxy_particles(
         M_gas,
         rd_gas_kpc,
         zd_gas_kpc,
-        args.Q_gas,
+        _get_galaxy_value(args.Q_gas, galaxy_id),
         rng,
         grid_solver,
         is_gas=True,
         spiral_params={
-            "arm_strength": args.arm_strength,
-            "stream_frac": args.arm_stream_frac,
-            "n_arms": args.n_arms,
-            "pitch_deg": args.pitch_deg,
-        } if args.arm_strength > 0 else None,
+            "arm_strength": arm_strength,
+            "stream_frac": _get_galaxy_value(args.arm_stream_frac, galaxy_id),
+            "n_arms": n_arms,
+            "pitch_deg": pitch_deg,
+        } if arm_strength > 0 else None,
         bar_params={
             "enabled": args.bar_enabled,
-            "stream_frac": args.bar_strength,
-            "radius": args.bar_radius,
-            "angle": args.bar_angle,
+            "stream_frac": bar_strength,
+            "radius": bar_radius,
+            "angle": bar_angle,
         } if args.bar_enabled else None,
     )
 
@@ -441,122 +542,102 @@ def main():
         "--n-galaxies", type=int, default=1, help="Number of galaxies to generate."
     )
     parser.add_argument(
-        "--secondary-mass-ratio",
-        type=float,
-        default=0.7,
-        help="Mass ratio M2/M1 used for the second galaxy in a merger.",
-    )
-    parser.add_argument(
-        "--secondary-size-ratio",
+        "--inclination-deg",
+        nargs="+",
         type=float,
         default=None,
-        help="Size ratio R2/R1. Defaults to sqrt(secondary mass ratio).",
+        help="Per-galaxy disc inclinations in degrees.",
     )
     parser.add_argument(
-        "--separation-kpc",
+        "--galaxy-positions-kpc",
+        nargs="+",
         type=float,
         default=None,
-        help="Initial centre-to-centre separation for a two-galaxy merger.",
+        help="Flat per-galaxy position list: x1 y1 z1 x2 y2 z2 ... in kpc.",
     )
     parser.add_argument(
-        "--impact-kpc",
+        "--galaxy-velocities-kms",
+        nargs="+",
         type=float,
-        default=20.0,
-        help="Transverse impact parameter for a two-galaxy merger.",
-    )
-    parser.add_argument(
-        "--relative-velocity-kms",
-        type=float,
-        default=150.0,
-        help="Initial approach speed between the two galaxy centres.",
-    )
-    parser.add_argument(
-        "--galaxy1-inclination-deg",
-        type=float,
-        default=0.0,
-        help="Inclination of the first disc around the x-axis.",
-    )
-    parser.add_argument(
-        "--galaxy2-inclination-deg",
-        type=float,
-        default=0.0,
-        help="Inclination of the second disc around the x-axis.",
+        default=None,
+        help="Flat per-galaxy bulk velocity list: vx1 vy1 vz1 vx2 vy2 vz2 ... in km/s.",
     )
 
     # Halo properties
     parser.add_argument(
-        "--n-halo", type=int, default=100000, help="Number of halo particles."
+        "--n-halo", nargs="+", type=int, default=[100000], help="Number of halo particles per galaxy."
     )
     parser.add_argument(
-        "--m200-msun", type=float, default=1e12, help="M200 of the halo in M_sun (10^10 M_sun units)."
+        "--m200-msun", nargs="+", type=float, default=[1e12], help="Halo M200 in M_sun per galaxy."
     )
     parser.add_argument(
-        "--c200", type=float, default=10.0, help="NFW concentration parameter."
+        "--c200", nargs="+", type=float, default=[10.0], help="NFW concentration per galaxy."
     )
 
     # Bulge properties
     parser.add_argument(
-        "--n-bulge", type=int, default=1000, help="Number of bulge particles."
+        "--n-bulge", nargs="+", type=int, default=[1000], help="Number of bulge particles per galaxy."
     )
     parser.add_argument(
-        "--m-bulge-msun", type=float, default=1e10, help="Bulge mass in M_sun (10^10 M_sun units)."
+        "--m-bulge-msun", nargs="+", type=float, default=[1e10], help="Bulge mass in M_sun per galaxy."
     )
     parser.add_argument(
-        "--bulge-a-kpc", type=float, default=0.8, help="Hernquist bulge scale length in kpc."
+        "--bulge-a-kpc", nargs="+", type=float, default=[0.8], help="Hernquist bulge scale length per galaxy in kpc."
     )
     parser.add_argument(
         "--bulge-rmax-scale",
+        nargs="+",
         type=float,
-        default=50.0,
-        help="Truncate Hernquist bulge sampling at this many scale lengths.",
+        default=[50.0],
+        help="Truncate Hernquist bulge sampling at this many scale lengths per galaxy.",
     )
 
     # Stellar disc properties
     parser.add_argument(
-        "--n-star", type=int, default=4000, help="Number of stellar particles."
+        "--n-star", nargs="+", type=int, default=[4000], help="Number of stellar particles per galaxy."
     )
     parser.add_argument(
-        "--m-star-msun", type=float, default=5e10, help="Stellar disc mass in M_sun (10^10 M_sun units)."
+        "--m-star-msun", nargs="+", type=float, default=[5e10], help="Stellar disc mass in M_sun per galaxy."
     )
     parser.add_argument(
-        "--rd-kpc", type=float, default=3.5, help="Stellar disc scale length in kpc."
+        "--rd-kpc", nargs="+", type=float, default=[3.5], help="Stellar disc scale length per galaxy in kpc."
     )
     parser.add_argument(
-        "--zd-kpc", type=float, default=0.35, help="Stellar disc scale height in kpc."
+        "--zd-kpc", nargs="+", type=float, default=[0.35], help="Stellar disc scale height per galaxy in kpc."
     )
     parser.add_argument(
-        "--Q-star", type=float, default=1.5, help="Toomre Q parameter for stellar disc."
+        "--Q-star", nargs="+", type=float, default=[1.5], help="Stellar-disc Toomre Q per galaxy."
     )
 
     # Gas disc properties
     parser.add_argument(
-        "--n-gas", type=int, default=1000, help="Number of gas particles."
+        "--n-gas", nargs="+", type=int, default=[1000], help="Number of gas particles per galaxy."
     )
     parser.add_argument(
-        "--m-gas-msun", type=float, default=1e10, help="Gas disc mass in M_sun (10^10 M_sun units)."
+        "--m-gas-msun", nargs="+", type=float, default=[1e10], help="Gas disc mass in M_sun per galaxy."
     )
     parser.add_argument(
-        "--rg-kpc", type=float, default=7.0, help="Gas disc scale length in kpc."
+        "--rg-kpc", nargs="+", type=float, default=[7.0], help="Gas disc scale length per galaxy in kpc."
     )
     parser.add_argument(
-        "--zg-kpc", type=float, default=0.1, help="Gas disc scale height in kpc."
+        "--zg-kpc", nargs="+", type=float, default=[0.1], help="Gas disc scale height per galaxy in kpc."
     )
     parser.add_argument(
-        "--Q-gas", type=float, default=1.0, help="Toomre Q parameter for gas disc."
+        "--Q-gas", nargs="+", type=float, default=[1.0], help="Gas-disc Toomre Q per galaxy."
     )
 
     # Spiral arm properties
     parser.add_argument(
-        "--n-arms", type=int, default=2, help="Number of spiral arms."
+        "--n-arms", nargs="+", type=int, default=[2], help="Number of spiral arms per galaxy."
     )
     parser.add_argument(
-        "--pitch-deg", type=float, default=15.0, help="Pitch angle of spiral arms in degrees."
+        "--pitch-deg", nargs="+", type=float, default=[15.0], help="Spiral-arm pitch angle per galaxy in degrees."
     )
     parser.add_argument(
-        "--arm-strength", type=float, default=0.3, help="Strength of spiral arms (0-1)."
+        "--arm-strength", nargs="+", type=float, default=[0.3], help="Spiral-arm strength per galaxy (0-1)."
     )
     parser.add_argument(
-        "--arm-stream-frac", type=float, default=0.1, help="Streaming velocity fraction for spiral arms."
+        "--arm-stream-frac", nargs="+", type=float, default=[0.1], help="Spiral-arm streaming fraction per galaxy."
     )
 
     # Bar properties
@@ -564,16 +645,16 @@ def main():
         "--bar-enabled", action="store_true", help="Enable a galactic bar."
     )
     parser.add_argument(
-        "--bar-strength", type=float, default=0.1, help="Strength of the bar."
+        "--bar-strength", nargs="+", type=float, default=[0.1], help="Bar strength per galaxy."
     )
     parser.add_argument(
-        "--bar-radius", type=float, default=3.0, help="Radius of the bar in kpc."
+        "--bar-radius", nargs="+", type=float, default=[3.0], help="Bar radius per galaxy in kpc."
     )
     parser.add_argument(
-        "--bar-q", type=float, default=0.3, help="Flattening parameter q for the bar."
+        "--bar-q", nargs="+", type=float, default=[0.3], help="Bar flattening q per galaxy."
     )
     parser.add_argument(
-        "--bar-angle", type=float, default=0.0, help="Angle of the bar in degrees."
+        "--bar-angle", nargs="+", type=float, default=[0.0], help="Bar angle per galaxy in degrees."
     )
 
     # Simulation properties
@@ -628,6 +709,8 @@ def main():
 
 
     args = parser.parse_args()
+    _normalise_per_galaxy_args(args)
+    galaxy_offsets, galaxy_bulk_velocities = _resolve_galaxy_placement(args)
 
     # --- Initialize RNG ---
     rng = get_rng(args.seed)
@@ -638,30 +721,11 @@ def main():
     print("======================================================================")
 
     all_galaxies_pos_mass = []
-    if args.n_galaxies < 1:
-        raise ValueError("--n-galaxies must be at least 1")
-    if args.n_galaxies > 2:
-        raise ValueError("This CLI currently supports one isolated galaxy or one two-galaxy merger")
-
-    separation = args.separation_kpc or args.box_kpc / 3.0
-    secondary_size_ratio = args.secondary_size_ratio or np.sqrt(args.secondary_mass_ratio)
 
     for i in range(args.n_galaxies):
         print(f"Generating positions for galaxy {i}...")
-        mass_scale = 1.0 if i == 0 else args.secondary_mass_ratio
-        size_scale = 1.0 if i == 0 else secondary_size_ratio
-        galaxy_data = generate_galaxy_particles(i, args, rng, mass_scale, size_scale)
-
-        if args.n_galaxies == 2:
-            if i == 0:
-                offset = np.array([-0.5 * separation, -0.5 * args.impact_kpc, 0.0])
-                bulk_velocity = np.array([0.5 * args.relative_velocity_kms, 0.0, 0.0])
-                inclination = args.galaxy1_inclination_deg
-            else:
-                offset = np.array([0.5 * separation, 0.5 * args.impact_kpc, 0.0])
-                bulk_velocity = np.array([-0.5 * args.relative_velocity_kms, 0.0, 0.0])
-                inclination = args.galaxy2_inclination_deg
-            _place_galaxy(galaxy_data, offset, bulk_velocity, inclination)
+        galaxy_data = generate_galaxy_particles(i, args, rng)
+        _place_galaxy(galaxy_data, galaxy_offsets[i], galaxy_bulk_velocities[i], args.inclination_deg[i])
 
         all_galaxies_pos_mass.append(galaxy_data)
 

@@ -14,12 +14,18 @@ python -m swift_spiral_ics.cli.generate \
   --run-name hires_1gyr_relax_merge \
   --snapshot-basename Runs/hires_1gyr_relax_merge/snapshot \
   --n-galaxies 2 \
-  --secondary-mass-ratio 0.8 \
-  --separation-kpc 400 \
-  --impact-kpc 18 \
-  --relative-velocity-kms 150 \
-  --galaxy1-inclination-deg 0 \
-  --galaxy2-inclination-deg 25 \
+  --galaxy-positions-kpc -200 -9 0 200 9 0 \
+  --galaxy-velocities-kms 75 0 0 -75 0 0 \
+  --inclination-deg 0 25 \
+  --m200-msun 1e12 8e11 \
+  --m-bulge-msun 1e10 8e9 \
+  --bulge-a-kpc 0.8 0.7155417528 \
+  --m-star-msun 5e10 4e10 \
+  --rd-kpc 3.5 3.1304951685 \
+  --zd-kpc 0.35 0.3130495168 \
+  --m-gas-msun 1e10 8e9 \
+  --rg-kpc 7.0 6.2609903370 \
+  --zg-kpc 0.1 0.0894427191 \
   --box-kpc 1600 \
   --n-halo 15000 \
   --n-bulge 5000 \
