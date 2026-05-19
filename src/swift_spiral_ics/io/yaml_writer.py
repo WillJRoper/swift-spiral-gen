@@ -48,6 +48,7 @@ def generate_swift_params(
     run_name: str | None = None,
     param_template: str = "eagle_ref_cosmo",
     min_gas_mass_msun: float | None = None,
+    feedback_scale: float = 1.0,
 ) -> str:
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
@@ -94,6 +95,24 @@ def generate_swift_params(
         f"particle_splitting_mass_threshold: {splitting_threshold_internal_units:.4e}",
         template_text,
     )
+
+    if feedback_scale <= 0:
+        raise ValueError("feedback_scale must be positive")
+
+    def _scale_yaml_value(key: str) -> None:
+        nonlocal template_text
+
+        def repl(match: re.Match[str]) -> str:
+            prefix, value, suffix = match.groups()
+            return f"{prefix}{float(value) * feedback_scale:.6g}{suffix}"
+
+        pattern = rf"(?m)^(\s*{key}:\s*)([\d.eE+-]+)(.*)$"
+        template_text, count = re.subn(pattern, repl, template_text, count=1)
+        if count != 1:
+            raise ValueError(f"Could not find '{key}' in parameter template")
+
+    _scale_yaml_value("SNII_energy_fraction_min")
+    _scale_yaml_value("SNII_energy_fraction_max")
 
     # Inject InternalUnitSystem (Mpc, 1e10 Msun, km/s)
     new_units = """InternalUnitSystem:

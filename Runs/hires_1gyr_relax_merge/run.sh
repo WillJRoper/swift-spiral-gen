@@ -14,29 +14,32 @@ python -m swift_spiral_ics.cli.generate \
   --run-name hires_1gyr_relax_merge \
   --snapshot-basename Runs/hires_1gyr_relax_merge/snapshot \
   --n-galaxies 2 \
-  --galaxy-positions-kpc -200 -9 0 200 9 0 \
-  --galaxy-velocities-kms 75 0 0 -75 0 0 \
+  --xs -200 200 \
+  --ys -9 9 \
+  --zs 0 0 \
+  --vxs 75 -75 \
+  --vys 0 0 \
+  --vzs 0 0 \
   --inclination-deg 0 25 \
-  --m200-msun 1e12 8e11 \
-  --m-bulge-msun 1e10 8e9 \
+  --dm-mass-msun 1e12 8e11 \
+  --dm-part-mass-msun 6.6666666667e7 \
+  --star-mass-msun 6e10 4.8e10 \
+  --bulge-fraction 0.1666666667 0.1666666667 \
+  --star-part-mass-msun 3.3333333333e6 \
+  --gas-mass-msun 1e10 8e9 \
+  --gas-part-mass-msun 3.3333333333e5 \
   --bulge-a-kpc 0.8 0.7155417528 \
-  --m-star-msun 5e10 4e10 \
-  --rd-kpc 3.5 3.1304951685 \
-  --zd-kpc 0.35 0.3130495168 \
-  --m-gas-msun 1e10 8e9 \
-  --rg-kpc 7.0 6.2609903370 \
-  --zg-kpc 0.1 0.0894427191 \
+  --stellar-disk-scale-length-kpc 3.5 3.1304951685 \
+  --stellar-disk-scale-height-kpc 0.35 0.3130495168 \
+  --gas-disk-scale-length-kpc 7.0 6.2609903370 \
+  --gas-disk-scale-height-kpc 0.1 0.0894427191 \
   --box-kpc 1600 \
-  --n-halo 15000 \
-  --n-bulge 5000 \
-  --n-star 15000 \
-  --n-gas 30000 \
   --nR-grid 128 \
   --nz-grid 128 \
   --eps-grid 0.8 \
   --bg-gas-density-msun-kpc3 10 \
   --bg-grid-kpc 0 \
-  --dt 0.0005 \
+  --max-timestep-gyr 0.0005 \
   --dt-min-gyr 1e-6 \
   --time-end-gyr 10.0 \
   --snapshot-dt-myr 5.0 \

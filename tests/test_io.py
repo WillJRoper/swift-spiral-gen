@@ -218,6 +218,17 @@ class TestYamlWriter:
 
         assert isinstance(params, str)
         assert "__RUN_NAME__" not in params
+
+    def test_generate_swift_params_scales_feedback(self):
+        """Test YAML generation applies relative SNII feedback scaling."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=100.0,
+            feedback_scale=0.1,
+        )
+
+        assert "SNII_energy_fraction_min:             0.0388" in params
+        assert "SNII_energy_fraction_max:             0.737" in params
         assert "run_name:" in params
         assert "file_name:  test.hdf5" in params
         assert "basename:            snap" in params

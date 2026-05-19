@@ -38,17 +38,20 @@ swift-spiral-ics \
   --out-ics galaxy_ic.hdf5 \
   --out-params galaxy_params.yml \
   --box-kpc 500 \
-  --m-part-msun 1e6 \
   --n-galaxies 1 \
-  --m200-msun 1e12 \
+  --dm-mass-msun 1e12 \
+  --dm-part-mass-msun 1e7 \
+  --star-mass-msun 6e10 \
+  --bulge-fraction 0.1666666667 \
+  --star-part-mass-msun 1.25e7 \
+  --gas-mass-msun 1e10 \
+  --gas-part-mass-msun 1e7 \
   --c200 10 \
-  --m-star-msun 5e10 \
-  --m-gas-msun 1e10 \
-  --dt 0.8 \
-  --rd-kpc 3.5 \
-  --zd-kpc 0.35 \
-  --rg-kpc 7.0 \
-  --zg-kpc 0.1 \
+  --max-timestep-gyr 0.8 \
+  --stellar-disk-scale-length-kpc 3.5 \
+  --stellar-disk-scale-height-kpc 0.35 \
+  --gas-disk-scale-length-kpc 7.0 \
+  --gas-disk-scale-height-kpc 0.1 \
   --bulge-a-kpc 0.8 \
   --n-arms 2 \
   --pitch-deg 15 \
@@ -63,22 +66,28 @@ swift-spiral-ics \
   --out-ics merger_ic.hdf5 \
   --out-params merger_params.yml \
   --box-kpc 1000 \
-  --m-part-msun 1e6 \
   --n-galaxies 2 \
-  --m200-msun 1e12 5e11 \
+  --dm-mass-msun 1e12 4e11 \
+  --dm-part-mass-msun 1e7 \
+  --star-mass-msun 6e10 2e10 \
+  --bulge-fraction 0.1666666667 0.25 \
+  --star-part-mass-msun 1.25e7 \
+  --gas-mass-msun 1e10 3e9 \
+  --gas-part-mass-msun 1e7 \
   --c200 10 8 \
-  --m-star-msun 5e10 2e10 \
-  --m-gas-msun 1e10 5e9 \
-  --dt 0.8 0.7 \
-  --rd-kpc 3.5 2.5 \
-  --zd-kpc 0.35 0.25 \
-  --rg-kpc 7.0 5.0 \
-  --zg-kpc 0.1 0.1 \
+  --max-timestep-gyr 0.8 \
+  --stellar-disk-scale-length-kpc 3.5 2.5 \
+  --stellar-disk-scale-height-kpc 0.35 0.25 \
+  --gas-disk-scale-length-kpc 7.0 5.0 \
+  --gas-disk-scale-height-kpc 0.1 0.1 \
   --bulge-a-kpc 0.8 0.6 \
-  --r-init-kpc 200 \
-  --r-peri-kpc 20 \
-  --inclination-deg 30 \
-  --node-deg 45
+  --xs -100 100 \
+  --ys 0 0 \
+  --zs 0 0 \
+  --vxs 50 -50 \
+  --vys 0 0 \
+  --vzs 0 0 \
+  --inclination-deg 0 30
 ```
 
 ### Visualize initial conditions
@@ -110,11 +119,11 @@ swift-spiral-movie "snapshot_*.hdf5" --out-movie evolution.mp4 --fps 15
 - `--c200`: Halo concentration
 - `--m-star-msun`: Total stellar mass (Msun)
 - `--m-gas-msun`: Total gas mass (Msun)
-- `--dt`: Disc-to-total stellar ratio
-- `--rd-kpc`: Stellar disc scale length (kpc)
-- `--zd-kpc`: Stellar disc scale height (kpc)
-- `--rg-kpc`: Gas disc scale length (kpc)
-- `--zg-kpc`: Gas disc scale height (kpc)
+- `--max-timestep-gyr`: Maximum simulation time-step (Gyr)
+- `--stellar-disk-scale-length-kpc`: Stellar disk scale length (kpc)
+- `--stellar-disk-scale-height-kpc`: Stellar disk scale height (kpc)
+- `--gas-disk-scale-length-kpc`: Gas disk scale length (kpc)
+- `--gas-disk-scale-height-kpc`: Gas disk scale height (kpc)
 - `--bulge-a-kpc`: Bulge Hernquist scale length (kpc)
 
 **Spiral and bar parameters:**
@@ -229,8 +238,8 @@ swift-spiral-ics \
   --box-kpc 500 --m-part-msun 1e6 --n-galaxies 1 \
   --m200-msun 1.5e12 --c200 12 \
   --m-star-msun 6e10 --m-gas-msun 1e10 \
-  --dt 0.75 --rd-kpc 3.0 --zd-kpc 0.3 \
-  --rg-kpc 7.0 --zg-kpc 0.15 --bulge-a-kpc 0.7 \
+  --max-timestep-gyr 0.75 --stellar-disk-scale-length-kpc 3.0 --stellar-disk-scale-height-kpc 0.3 \
+  --gas-disk-scale-length-kpc 7.0 --gas-disk-scale-height-kpc 0.15 --bulge-a-kpc 0.7 \
   --n-arms 2 --pitch-deg 12 --arm-strength 0.3
 ```
 
@@ -244,9 +253,9 @@ swift-spiral-ics \
   --c200 10 10 \
   --m-star-msun 5e10 1.5e10 \
   --m-gas-msun 1e10 3e9 \
-  --dt 0.8 0.8 \
-  --rd-kpc 3.5 2.0 --zd-kpc 0.35 0.2 \
-  --rg-kpc 7.0 4.0 --zg-kpc 0.1 0.1 \
+  --max-timestep-gyr 0.8 \
+  --stellar-disk-scale-length-kpc 3.5 2.0 --stellar-disk-scale-height-kpc 0.35 0.2 \
+  --gas-disk-scale-length-kpc 7.0 4.0 --gas-disk-scale-height-kpc 0.1 0.1 \
   --bulge-a-kpc 0.8 0.5 \
   --r-init-kpc 300 --r-peri-kpc 10 \
   --inclination-deg 60 --node-deg 90
