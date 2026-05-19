@@ -37,6 +37,7 @@ python -m swift_spiral_ics.cli.generate \
   --nR-grid 96 \
   --nz-grid 96 \
   --eps-grid 0.8 \
+  --h-max-cell-fraction 0.5 \
   --max-timestep-gyr 0.0005 \
   --dt-min-gyr 1e-6 \
   --time-end-gyr 0.5 \
