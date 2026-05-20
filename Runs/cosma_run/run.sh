@@ -40,7 +40,7 @@ swift-spiral-ics \
   --scheduler-tasks-per-cell 500000 \
   --bg-gas-density-msun-kpc3 1000 \
   --bg-grid-kpc 0 \
-  --bg-radius-kpc 500 \
+  --bg-radius-kpc 300 \
   --max-timestep-gyr 0.0005 \
   --dt-min-gyr 1e-6 \
   --time-end-gyr 10.0 \
