@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
-THREADS="${THREADS:-8}"
+THREADS="${THREADS:-32}"
 MAKE_MOVIE="${MAKE_MOVIE:-1}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 FEEDBACK_SCALE=0.25
