@@ -73,8 +73,8 @@ def generate_swift_params(
         flags=re.DOTALL,
     )
 
-    # Set periodic to 0
-    template_text = re.sub(r"periodic:\s*1", "periodic:   0", template_text)
+    # Drop cell_split_size so SWIFT uses its own default behaviour.
+    template_text = re.sub(r"(?m)^\s*cell_split_size:\s*\d+\s*\n", "", template_text)
 
     # Update SPH Parameters for Unit System (Mpc, 1e10 Msun)
 

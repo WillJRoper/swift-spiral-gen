@@ -219,6 +219,8 @@ class TestYamlWriter:
 
         assert isinstance(params, str)
         assert "__RUN_NAME__" not in params
+        assert "periodic:   1" in params
+        assert "cell_split_size" not in params
 
     def test_generate_swift_params_scales_feedback(self):
         """Test YAML generation applies relative SNII feedback scaling."""
