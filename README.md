@@ -236,6 +236,9 @@ If an axis is omitted while positions are otherwise provided, that axis defaults
 - `--nR-grid`: radial grid resolution for the C++ solver
 - `--nz-grid`: vertical grid resolution for the C++ solver
 - `--eps-grid`: solver softening length in kpc
+- `--h-max-cell-fraction`: set `h_max` as a fraction of the SWIFT top-level cell width
+- `--max-top-level-cells`: set `Scheduler.max_top_level_cells` in the generated SWIFT YAML
+- `--scheduler-tasks-per-cell`: set `Scheduler.tasks_per_cell` in the generated SWIFT YAML
 
 ### Feedback And Runtime Parameters
 

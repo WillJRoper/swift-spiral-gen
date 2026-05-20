@@ -268,6 +268,18 @@ class TestYamlWriter:
 
         assert "tasks_per_cell:        500000" in params
 
+    def test_generate_swift_params_custom_max_top_level_cells(self):
+        """Custom top-level cell count is reflected in the YAML and h_max scaling."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=1600.0,
+            h_max_cell_fraction=0.8,
+            max_top_level_cells=32,
+        )
+
+        assert "max_top_level_cells:   32" in params
+        assert "h_max:                             0.04" in params
+
     def test_generate_swift_params_rejects_non_positive_scheduler_tasks_per_cell(self):
         """Scheduler task budget must be positive."""
         with pytest.raises(ValueError, match="scheduler_tasks_per_cell must be positive"):
@@ -275,6 +287,15 @@ class TestYamlWriter:
                 ic_filename="test.hdf5",
                 box_size=100.0,
                 scheduler_tasks_per_cell=0,
+            )
+
+    def test_generate_swift_params_rejects_non_positive_max_top_level_cells(self):
+        """Top-level cell count must be positive."""
+        with pytest.raises(ValueError, match="max_top_level_cells must be positive"):
+            generate_swift_params(
+                ic_filename="test.hdf5",
+                box_size=100.0,
+                max_top_level_cells=0,
             )
 
     def test_write_yaml_file(self):

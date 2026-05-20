@@ -908,6 +908,12 @@ def main():
         default=100,
         help="Set Scheduler.tasks_per_cell in the generated SWIFT YAML.",
     )
+    parser.add_argument(
+        "--max-top-level-cells",
+        type=int,
+        default=16,
+        help="Set Scheduler.max_top_level_cells in the generated SWIFT YAML and derive h_max from that cell width.",
+    )
 
     # Background properties
     parser.add_argument(
@@ -1048,6 +1054,7 @@ def main():
         feedback_scale=args.feedback_scale,
         h_max_cell_fraction=args.h_max_cell_fraction,
         scheduler_tasks_per_cell=args.scheduler_tasks_per_cell,
+        max_top_level_cells=args.max_top_level_cells,
     )
     with open(args.out_params, "w") as f:
         f.write(params)

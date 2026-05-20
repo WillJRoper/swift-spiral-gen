@@ -52,6 +52,7 @@ def generate_swift_params(
     feedback_scale: float = 1.0,
     h_max_cell_fraction: float = _H_MAX_CELL_FRACTION,
     scheduler_tasks_per_cell: int = _SCHEDULER_TASKS_PER_CELL,
+    max_top_level_cells: int = _MAX_TOP_LEVEL_CELLS,
 ) -> str:
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
@@ -84,11 +85,18 @@ def generate_swift_params(
         raise ValueError("h_max_cell_fraction must be positive")
     if scheduler_tasks_per_cell <= 0:
         raise ValueError("scheduler_tasks_per_cell must be positive")
+    if max_top_level_cells <= 0:
+        raise ValueError("max_top_level_cells must be positive")
 
-    cell_width_kpc = box_size / _MAX_TOP_LEVEL_CELLS
+    cell_width_kpc = box_size / max_top_level_cells
     h_max_val = h_max_cell_fraction * cell_width_kpc / 1000.0  # convert from kpc to Mpc
     template_text = re.sub(
         r"h_max:\s*[\d.eE+-]+", f"h_max:                             {h_max_val}", template_text
+    )
+    template_text = re.sub(
+        r"max_top_level_cells:\s*\d+",
+        f"max_top_level_cells:   {max_top_level_cells}",
+        template_text,
     )
     template_text = re.sub(
         r"tasks_per_cell:\s*\d+",
