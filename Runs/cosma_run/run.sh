@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
 THREADS="${THREADS:-8}"
 MAKE_MOVIE="${MAKE_MOVIE:-1}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 FEEDBACK_SCALE=0.25
 
-cd "$REPO_DIR"
-
-python -m swift_spiral_ics.cli.generate \
-  --out-ics Runs/cosma_run/cosma_run.hdf5 \
-  --out-params Runs/cosma_run/cosma_run.yml \
+swift-spiral-ics \
+  --out-ics cosma_run.hdf5 \
+  --out-params cosma_run.yml \
   --run-name cosma_run \
-  --snapshot-basename Runs/cosma_run/snapshot \
+  --snapshot-basename snapshot \
   --n-galaxies 3 \
   --xs 500 820 340 \
   --ys 500 620 440 \
@@ -55,10 +51,10 @@ python -m swift_spiral_ics.cli.generate \
   --Q-gas 1.5 \
   --bulge-rmax-scale 50
 
-"$SWIFT_BIN" $EAGLE_FLAGS --threads="$THREADS" Runs/cosma_run/cosma_run.yml
+"$SWIFT_BIN" $EAGLE_FLAGS --threads="$THREADS" cosma_run.yml
 
 if [ "$MAKE_MOVIE" = "1" ]; then
-  python create_movie.py Runs/cosma_run \
+  python ../../create_movie.py . \
     --width-kpc 620 \
     --npix 520 \
     --fps 12 \
