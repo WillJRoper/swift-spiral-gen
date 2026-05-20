@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
+THREADS="${THREADS:-8}"
+MAKE_MOVIE="${MAKE_MOVIE:-1}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 FEEDBACK_SCALE=0.25
 
@@ -15,9 +17,9 @@ python -m swift_spiral_ics.cli.generate \
   --run-name cosma_run \
   --snapshot-basename Runs/cosma_run/snapshot \
   --n-galaxies 3 \
-  --xs 0 180 -90 \
-  --ys 0 60 -30 \
-  --zs 0 40 -20 \
+  --xs 500 820 340 \
+  --ys 500 620 440 \
+  --zs 500 580 460 \
   --vxs 30 -70 50 \
   --vys -18.75 -25 65 \
   --vzs -10 -10 30 \
@@ -34,16 +36,17 @@ python -m swift_spiral_ics.cli.generate \
   --stellar-disk-scale-height-kpc 0.35 0.3274487714 0.2766992953 \
   --gas-disk-scale-length-kpc 7.0 6.5489754274 5.5339859053 \
   --gas-disk-scale-height-kpc 0.1 0.0935567910 0.0790569415 \
-  --box-kpc 1600 \
+  --box-kpc 1000 \
   --nR-grid 160 \
   --nz-grid 160 \
   --eps-grid 0.8 \
-  --h-max-cell-fraction 0.5 \
-  --bg-gas-density-msun-kpc3 100 \
+  --h-max-cell-fraction 0.7 \
+  --scheduler-tasks-per-cell 500000 \
+  --bg-gas-density-msun-kpc3 1000 \
   --bg-grid-kpc 0 \
   --max-timestep-gyr 0.0005 \
   --dt-min-gyr 1e-6 \
-  --time-end-gyr 1.0 \
+  --time-end-gyr 10.0 \
   --snapshot-dt-myr 5.0 \
   --feedback-scale "$FEEDBACK_SCALE" \
   --arm-strength 0.15 \
@@ -52,16 +55,18 @@ python -m swift_spiral_ics.cli.generate \
   --Q-gas 1.5 \
   --bulge-rmax-scale 50
 
-"$SWIFT_BIN" $EAGLE_FLAGS --threads=8 Runs/cosma_run/cosma_run.yml
+"$SWIFT_BIN" $EAGLE_FLAGS --threads="$THREADS" Runs/cosma_run/cosma_run.yml
 
-python create_movie.py Runs/cosma_run \
-  --width-kpc 620 \
-  --npix 520 \
-  --fps 12 \
-  --dpi 160 \
-  --bitrate 3200 \
-  --gas-vmin 5e4 \
-  --gas-vmax 2e8 \
-  --stars-vmin 5e4 \
-  --stars-vmax 2e9 \
-  --title-prefix "500k-particle reduced-feedback three-galaxy merger"
+if [ "$MAKE_MOVIE" = "1" ]; then
+  python create_movie.py Runs/cosma_run \
+    --width-kpc 620 \
+    --npix 520 \
+    --fps 12 \
+    --dpi 160 \
+    --bitrate 3200 \
+    --gas-vmin 5e4 \
+    --gas-vmax 2e8 \
+    --stars-vmin 5e4 \
+    --stars-vmax 2e9 \
+    --title-prefix "500k-particle reduced-feedback three-galaxy merger"
+fi

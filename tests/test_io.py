@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 
 from swift_spiral_ics.io.swift_writer import write_swift_ic
 from swift_spiral_ics.io.yaml_writer import generate_swift_params, write_yaml_file
@@ -256,6 +257,25 @@ class TestYamlWriter:
         )
 
         assert "h_max:                             0.08" in params
+
+    def test_generate_swift_params_custom_scheduler_tasks_per_cell(self):
+        """Custom scheduler task budget is reflected in the YAML."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=100.0,
+            scheduler_tasks_per_cell=500000,
+        )
+
+        assert "tasks_per_cell:        500000" in params
+
+    def test_generate_swift_params_rejects_non_positive_scheduler_tasks_per_cell(self):
+        """Scheduler task budget must be positive."""
+        with pytest.raises(ValueError, match="scheduler_tasks_per_cell must be positive"):
+            generate_swift_params(
+                ic_filename="test.hdf5",
+                box_size=100.0,
+                scheduler_tasks_per_cell=0,
+            )
 
     def test_write_yaml_file(self):
         """Test YAML file writing."""

@@ -1,5 +1,6 @@
 """Integration tests for full IC generation pipeline."""
 
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -85,6 +86,125 @@ class TestFullPipeline:
                 assert "Header" in f
                 assert "Units" in f
                 assert "PartType0" in f or "PartType1" in f or "PartType4" in f
+
+    def test_multi_galaxy_positions_are_literal_box_coordinates(self):
+        """Per-galaxy positions are interpreted as literal coordinates in the box."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            yaml_file = Path(tmpdir) / "test_params.yml"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "swift_spiral_ics.cli.generate",
+                "--out-ics",
+                str(ic_file),
+                "--out-params",
+                str(yaml_file),
+                "--seed",
+                "42",
+                "--box-kpc",
+                "100",
+                "--n-galaxies",
+                "2",
+                "--xs",
+                "10",
+                "90",
+                "--ys",
+                "50",
+                "50",
+                "--zs",
+                "50",
+                "50",
+                "--dm-mass-msun",
+                "1e9",
+                "1e9",
+                "--dm-part-mass-msun",
+                "1e9",
+                "--star-mass-msun",
+                "1e8",
+                "1e8",
+                "--bulge-fraction",
+                "0.0",
+                "0.0",
+                "--star-part-mass-msun",
+                "1e8",
+                "--gas-mass-msun",
+                "1e8",
+                "1e8",
+                "--gas-part-mass-msun",
+                "1e8",
+                "--c200",
+                "10",
+                "10",
+                "--stellar-disk-scale-length-kpc",
+                "1.0",
+                "1.0",
+                "--stellar-disk-scale-height-kpc",
+                "0.1",
+                "0.1",
+                "--gas-disk-scale-length-kpc",
+                "1.0",
+                "1.0",
+                "--gas-disk-scale-height-kpc",
+                "0.1",
+                "0.1",
+                "--bulge-a-kpc",
+                "0.5",
+                "0.5",
+                "--nR-grid",
+                "16",
+                "--nz-grid",
+                "16",
+                "--eps-grid",
+                "0.5",
+                "--time-end-gyr",
+                "0.01",
+                "--snapshot-dt-myr",
+                "5",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                dm_x_kpc = f["PartType1/Coordinates"][:, 0] * 1000.0
+                assert dm_x_kpc.min() < 20.0
+                assert dm_x_kpc.max() > 80.0
+
+    def test_multi_galaxy_positions_must_lie_inside_box(self):
+        """Out-of-box galaxy coordinates are rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            yaml_file = Path(tmpdir) / "test_params.yml"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "swift_spiral_ics.cli.generate",
+                "--out-ics",
+                str(ic_file),
+                "--out-params",
+                str(yaml_file),
+                "--box-kpc",
+                "100",
+                "--n-galaxies",
+                "2",
+                "--xs",
+                "10",
+                "110",
+                "--ys",
+                "50",
+                "50",
+                "--zs",
+                "50",
+                "50",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert result.returncode != 0
+            assert "must lie within 0 and --box-kpc" in result.stderr
 
 
 class TestSampling:

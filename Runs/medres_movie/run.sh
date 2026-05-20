@@ -14,9 +14,9 @@ python -m swift_spiral_ics.cli.generate \
   --run-name medres_movie \
   --snapshot-basename Runs/medres_movie/snapshot \
   --n-galaxies 2 \
-  --xs -100 100 \
-  --ys -10 10 \
-  --zs 0 0 \
+  --xs 500 700 \
+  --ys 590 610 \
+  --zs 600 600 \
   --vxs 25 -25 \
   --vys 0 0 \
   --vzs 0 0 \

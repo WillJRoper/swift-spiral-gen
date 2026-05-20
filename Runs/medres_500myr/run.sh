@@ -14,9 +14,9 @@ python -m swift_spiral_ics.cli.generate \
   --run-name medres_500myr \
   --snapshot-basename Runs/medres_500myr/snapshot \
   --n-galaxies 2 \
-  --xs -125 125 \
-  --ys -17.5 17.5 \
-  --zs 0 0 \
+  --xs 675 925 \
+  --ys 782.5 817.5 \
+  --zs 800 800 \
   --vxs 40 -40 \
   --vys 0 0 \
   --vzs 0 0 \

@@ -173,11 +173,21 @@ def _resolve_galaxy_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.
     xs = _resolve_axis_values(args.xs, args.n_galaxies, "--xs")
     ys = _resolve_axis_values(args.ys, args.n_galaxies, "--ys")
     zs = _resolve_axis_values(args.zs, args.n_galaxies, "--zs")
-    positions = None if xs is None and ys is None and zs is None else np.column_stack([
-        np.zeros(args.n_galaxies, dtype=float) if xs is None else xs,
-        np.zeros(args.n_galaxies, dtype=float) if ys is None else ys,
-        np.zeros(args.n_galaxies, dtype=float) if zs is None else zs,
-    ])
+    positions = None
+    if xs is not None or ys is not None or zs is not None:
+        box_center = args.box_kpc / 2.0
+        positions = np.column_stack([
+            np.full(args.n_galaxies, box_center, dtype=float) if xs is None else xs,
+            np.full(args.n_galaxies, box_center, dtype=float) if ys is None else ys,
+            np.full(args.n_galaxies, box_center, dtype=float) if zs is None else zs,
+        ])
+
+        if np.any(positions < 0.0) or np.any(positions > args.box_kpc):
+            raise ValueError(
+                "Galaxy positions from --xs, --ys, and --zs must lie within 0 and --box-kpc"
+            )
+
+        positions = positions - box_center
 
     vxs = _resolve_axis_values(args.vxs, args.n_galaxies, "--vxs")
     vys = _resolve_axis_values(args.vys, args.n_galaxies, "--vys")
@@ -680,21 +690,21 @@ def main():
         nargs="+",
         type=float,
         default=None,
-        help="Per-galaxy x positions in kpc.",
+        help="Per-galaxy x coordinates in the box in kpc.",
     )
     parser.add_argument(
         "--ys",
         nargs="+",
         type=float,
         default=None,
-        help="Per-galaxy y positions in kpc.",
+        help="Per-galaxy y coordinates in the box in kpc.",
     )
     parser.add_argument(
         "--zs",
         nargs="+",
         type=float,
         default=None,
-        help="Per-galaxy z positions in kpc.",
+        help="Per-galaxy z coordinates in the box in kpc.",
     )
     parser.add_argument(
         "--vxs",
@@ -840,6 +850,12 @@ def main():
         default=0.5,
         help="Set h_max to this fraction of the top-level cell width in the generated SWIFT YAML.",
     )
+    parser.add_argument(
+        "--scheduler-tasks-per-cell",
+        type=int,
+        default=100,
+        help="Set Scheduler.tasks_per_cell in the generated SWIFT YAML.",
+    )
 
     # Background properties
     parser.add_argument(
@@ -972,6 +988,7 @@ def main():
         min_gas_mass_msun=min_gas_mass,
         feedback_scale=args.feedback_scale,
         h_max_cell_fraction=args.h_max_cell_fraction,
+        scheduler_tasks_per_cell=args.scheduler_tasks_per_cell,
     )
     with open(args.out_params, "w") as f:
         f.write(params)

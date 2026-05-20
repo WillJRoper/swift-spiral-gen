@@ -14,9 +14,9 @@ python -m swift_spiral_ics.cli.generate \
   --run-name hires_1gyr_relax_merge \
   --snapshot-basename Runs/hires_1gyr_relax_merge/snapshot \
   --n-galaxies 2 \
-  --xs -200 200 \
-  --ys -9 9 \
-  --zs 0 0 \
+  --xs 600 1000 \
+  --ys 791 809 \
+  --zs 800 800 \
   --vxs 75 -75 \
   --vys 0 0 \
   --vzs 0 0 \

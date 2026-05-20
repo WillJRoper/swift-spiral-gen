@@ -17,6 +17,7 @@ _UNIT_TIME_SECONDS = 3.085678e19  # Mpc / (km/s)
 _GYR_PER_INTERNAL_TIME = _UNIT_TIME_SECONDS / _SECONDS_PER_GYR
 _MAX_TOP_LEVEL_CELLS = 16
 _H_MAX_CELL_FRACTION = 0.5
+_SCHEDULER_TASKS_PER_CELL = 100
 
 
 def available_param_templates() -> list[str]:
@@ -50,6 +51,7 @@ def generate_swift_params(
     min_gas_mass_msun: float | None = None,
     feedback_scale: float = 1.0,
     h_max_cell_fraction: float = _H_MAX_CELL_FRACTION,
+    scheduler_tasks_per_cell: int = _SCHEDULER_TASKS_PER_CELL,
 ) -> str:
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
@@ -80,11 +82,18 @@ def generate_swift_params(
     # during setup for isolated galaxy runs.
     if h_max_cell_fraction <= 0:
         raise ValueError("h_max_cell_fraction must be positive")
+    if scheduler_tasks_per_cell <= 0:
+        raise ValueError("scheduler_tasks_per_cell must be positive")
 
     cell_width_kpc = box_size / _MAX_TOP_LEVEL_CELLS
     h_max_val = h_max_cell_fraction * cell_width_kpc / 1000.0  # convert from kpc to Mpc
     template_text = re.sub(
         r"h_max:\s*[\d.eE+-]+", f"h_max:                             {h_max_val}", template_text
+    )
+    template_text = re.sub(
+        r"tasks_per_cell:\s*\d+",
+        f"tasks_per_cell:        {scheduler_tasks_per_cell}",
+        template_text,
     )
 
     # 2. Particle Splitting Threshold

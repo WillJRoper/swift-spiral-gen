@@ -62,6 +62,7 @@ ic_plots/
 Runs/**
 !Runs/**/
 !Runs/**/run.sh
+!Runs/**/submit.sh
 !Runs/**/README.md
 
 # Apple files 

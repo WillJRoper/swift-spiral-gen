@@ -81,9 +81,9 @@ swift-spiral-ics \
   --gas-disk-scale-length-kpc 7.0 5.0 \
   --gas-disk-scale-height-kpc 0.1 0.1 \
   --bulge-a-kpc 0.8 0.6 \
-  --xs -100 100 \
-  --ys 0 0 \
-  --zs 0 0 \
+  --xs 400 600 \
+  --ys 500 500 \
+  --zs 500 500 \
   --vxs 50 -50 \
   --vys 0 0 \
   --vzs 0 0 \
@@ -137,7 +137,7 @@ For `--n-galaxies > 1`, you should also set:
 
 If you do not provide positions:
 
-- one galaxy is placed at the origin with zero bulk velocity
+- one galaxy is placed at the box centre with zero bulk velocity
 - multiple galaxies raise an error
 
 Everything else has defaults.
@@ -191,7 +191,7 @@ Dark matter is not disk-based. It is always treated as an NFW halo.
 
 ### Multi-Galaxy Placement
 
-Positions are given in kpc:
+Positions are literal box coordinates in kpc and must lie between `0` and `--box-kpc`:
 
 - `--xs`
 - `--ys`
@@ -207,7 +207,7 @@ Disk orientations are given by:
 
 - `--inclination-deg`
 
-The first galaxy is often placed at `(0, 0, 0)`, but that is only a convention.
+If an axis is omitted while positions are otherwise provided, that axis defaults to the box centre for every galaxy.
 
 ### Spiral Structure
 
