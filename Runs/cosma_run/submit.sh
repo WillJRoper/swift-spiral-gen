@@ -10,7 +10,8 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RUN_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+ROOT_DIR="$(cd "$RUN_DIR/.." && pwd)"
 REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 
 mkdir -p "$REPO_DIR/Runs/cosma_run/logs"
