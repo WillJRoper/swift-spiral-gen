@@ -252,11 +252,13 @@ Examples:
 - `--bg-gas-density-msun-kpc3`: uniform background gas density
 - `--bg-dm-density-msun-kpc3`: uniform background dark matter density
 - `--bg-grid-kpc`: background particle spacing
+- `--bg-radius-kpc`: optional spherical cutoff radius for background particles around the central galaxy
 
 Background behavior:
 
 - `--bg-grid-kpc 0`: random uniform background
 - `--bg-grid-kpc > 0`: regular grid background with jitter
+- `--bg-radius-kpc R`: limit either background mode to a sphere of radius `R` rather than the full box
 
 ### Output And Metadata
 

@@ -206,6 +206,152 @@ class TestFullPipeline:
             assert result.returncode != 0
             assert "must lie within 0 and --box-kpc" in result.stderr
 
+    def test_random_background_radius_limits_gas_extent(self):
+        """Random background gas can be restricted to a sphere around the box centre."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            yaml_file = Path(tmpdir) / "test_params.yml"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "swift_spiral_ics.cli.generate",
+                "--out-ics",
+                str(ic_file),
+                "--out-params",
+                str(yaml_file),
+                "--seed",
+                "42",
+                "--box-kpc",
+                "100",
+                "--n-galaxies",
+                "1",
+                "--dm-mass-msun",
+                "1e9",
+                "--dm-part-mass-msun",
+                "1e9",
+                "--star-mass-msun",
+                "1e8",
+                "--bulge-fraction",
+                "0.0",
+                "--star-part-mass-msun",
+                "1e8",
+                "--gas-mass-msun",
+                "1e8",
+                "--gas-part-mass-msun",
+                "1e7",
+                "--c200",
+                "10",
+                "--stellar-disk-scale-length-kpc",
+                "1.0",
+                "--stellar-disk-scale-height-kpc",
+                "0.1",
+                "--gas-disk-scale-length-kpc",
+                "1.0",
+                "--gas-disk-scale-height-kpc",
+                "0.1",
+                "--bulge-a-kpc",
+                "0.5",
+                "--nR-grid",
+                "16",
+                "--nz-grid",
+                "16",
+                "--eps-grid",
+                "0.5",
+                "--time-end-gyr",
+                "0.01",
+                "--snapshot-dt-myr",
+                "5",
+                "--bg-gas-density-msun-kpc3",
+                "1e4",
+                "--bg-grid-kpc",
+                "0",
+                "--bg-radius-kpc",
+                "20",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                coords_kpc = f["PartType0/Coordinates"][:] * 1000.0
+                centered = coords_kpc - 50.0
+                radius = (centered**2).sum(axis=1) ** 0.5
+                assert radius.max() <= 20.1
+
+    def test_grid_background_radius_limits_gas_extent(self):
+        """Grid background gas can be restricted to a sphere around the box centre."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            yaml_file = Path(tmpdir) / "test_params.yml"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "swift_spiral_ics.cli.generate",
+                "--out-ics",
+                str(ic_file),
+                "--out-params",
+                str(yaml_file),
+                "--seed",
+                "42",
+                "--box-kpc",
+                "100",
+                "--n-galaxies",
+                "1",
+                "--dm-mass-msun",
+                "1e9",
+                "--dm-part-mass-msun",
+                "1e9",
+                "--star-mass-msun",
+                "1e8",
+                "--bulge-fraction",
+                "0.0",
+                "--star-part-mass-msun",
+                "1e8",
+                "--gas-mass-msun",
+                "1e8",
+                "--gas-part-mass-msun",
+                "1e7",
+                "--c200",
+                "10",
+                "--stellar-disk-scale-length-kpc",
+                "1.0",
+                "--stellar-disk-scale-height-kpc",
+                "0.1",
+                "--gas-disk-scale-length-kpc",
+                "1.0",
+                "--gas-disk-scale-height-kpc",
+                "0.1",
+                "--bulge-a-kpc",
+                "0.5",
+                "--nR-grid",
+                "16",
+                "--nz-grid",
+                "16",
+                "--eps-grid",
+                "0.5",
+                "--time-end-gyr",
+                "0.01",
+                "--snapshot-dt-myr",
+                "5",
+                "--bg-gas-density-msun-kpc3",
+                "1e4",
+                "--bg-grid-kpc",
+                "10",
+                "--bg-radius-kpc",
+                "20",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                coords_kpc = f["PartType0/Coordinates"][:] * 1000.0
+                centered = coords_kpc - 50.0
+                radius = (centered**2).sum(axis=1) ** 0.5
+                assert radius.max() <= 21.5
+
 
 class TestSampling:
     """Test particle sampling functions."""

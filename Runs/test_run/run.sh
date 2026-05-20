@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 FEEDBACK_SCALE=0.25
 
-cd "$REPO_DIR"
-
-python -m swift_spiral_ics.cli.generate \
-  --out-ics Runs/test_run/test_run.hdf5 \
-  --out-params Runs/test_run/test_run.yml \
+swift-spiral-ics \
+  --out-ics test_run.hdf5 \
+  --out-params test_run.yml \
   --run-name test_run \
-  --snapshot-basename Runs/test_run/snapshot \
+  --snapshot-basename snapshot \
   --n-galaxies 3 \
   --xs 500 820 340 \
   --ys 500 620 440 \
@@ -42,6 +38,7 @@ python -m swift_spiral_ics.cli.generate \
   --scheduler-tasks-per-cell 500000 \
   --bg-gas-density-msun-kpc3 1000 \
   --bg-grid-kpc 0 \
+  --bg-radius-kpc 500 \
   --max-timestep-gyr 0.0005 \
   --dt-min-gyr 1e-6 \
   --time-end-gyr 10.0 \
@@ -53,9 +50,9 @@ python -m swift_spiral_ics.cli.generate \
   --Q-gas 1.5 \
   --bulge-rmax-scale 50
 
-"$SWIFT_BIN" $EAGLE_FLAGS --threads=8 Runs/test_run/test_run.yml
+"$SWIFT_BIN" $EAGLE_FLAGS --threads=8 test_run.yml
 
-python create_movie.py Runs/test_run \
+python ../../create_movie.py . \
   --width-kpc 620 \
   --npix 520 \
   --fps 12 \

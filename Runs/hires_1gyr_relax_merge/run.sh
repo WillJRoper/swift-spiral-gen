@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 
-cd "$REPO_DIR"
-
-python -m swift_spiral_ics.cli.generate \
-  --out-ics Runs/hires_1gyr_relax_merge/hires_1gyr_relax_merge.hdf5 \
-  --out-params Runs/hires_1gyr_relax_merge/hires_1gyr_relax_merge.yml \
+swift-spiral-ics \
+  --out-ics hires_1gyr_relax_merge.hdf5 \
+  --out-params hires_1gyr_relax_merge.yml \
   --run-name hires_1gyr_relax_merge \
-  --snapshot-basename Runs/hires_1gyr_relax_merge/snapshot \
+  --snapshot-basename snapshot \
   --n-galaxies 2 \
   --xs 600 1000 \
   --ys 791 809 \
@@ -40,6 +36,7 @@ python -m swift_spiral_ics.cli.generate \
   --h-max-cell-fraction 0.5 \
   --bg-gas-density-msun-kpc3 10 \
   --bg-grid-kpc 0 \
+  --bg-radius-kpc 400 \
   --max-timestep-gyr 0.0005 \
   --dt-min-gyr 1e-6 \
   --time-end-gyr 10.0 \
@@ -50,9 +47,9 @@ python -m swift_spiral_ics.cli.generate \
   --Q-gas 1.5 \
   --bulge-rmax-scale 50
 
-"$SWIFT_BIN" $EAGLE_FLAGS --threads=8 Runs/hires_1gyr_relax_merge/hires_1gyr_relax_merge.yml
+"$SWIFT_BIN" $EAGLE_FLAGS --threads=8 hires_1gyr_relax_merge.yml
 
-python create_movie.py Runs/hires_1gyr_relax_merge \
+python ../../create_movie.py . \
   --width-kpc 620 \
   --npix 520 \
   --fps 12 \

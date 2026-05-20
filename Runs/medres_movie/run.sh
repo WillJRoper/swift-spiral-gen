@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 
-cd "$REPO_DIR"
-
-python -m swift_spiral_ics.cli.generate \
-  --out-ics Runs/medres_movie/medres_movie.hdf5 \
-  --out-params Runs/medres_movie/medres_movie.yml \
+swift-spiral-ics \
+  --out-ics medres_movie.hdf5 \
+  --out-params medres_movie.yml \
   --run-name medres_movie \
-  --snapshot-basename Runs/medres_movie/snapshot \
+  --snapshot-basename snapshot \
   --n-galaxies 2 \
   --xs 500 700 \
   --ys 590 610 \
@@ -48,9 +44,9 @@ python -m swift_spiral_ics.cli.generate \
   --Q-gas 1.5 \
   --bulge-rmax-scale 50
 
-"$SWIFT_BIN" $EAGLE_FLAGS --threads=4 Runs/medres_movie/medres_movie.yml
+"$SWIFT_BIN" $EAGLE_FLAGS --threads=4 medres_movie.yml
 
-python create_movie.py Runs/medres_movie \
+python ../../create_movie.py . \
   --width-kpc 320 \
   --npix 420 \
   --fps 12 \

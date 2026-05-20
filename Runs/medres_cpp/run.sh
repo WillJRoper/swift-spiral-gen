@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 SWIFT_BIN="${SWIFT_BIN:-/Users/willroper/Research/SWIFT/swiftsim/swift}"
 MAKE_MOVIE="${MAKE_MOVIE:-0}"
 EAGLE_FLAGS="--hydro --self-gravity --stars --cooling --star-formation --feedback"
 
-cd "$REPO_DIR"
-
-python -m swift_spiral_ics.cli.generate \
-  --out-ics Runs/medres_cpp/medres_merger.hdf5 \
-  --out-params Runs/medres_cpp/medres_merger.yml \
+swift-spiral-ics \
+  --out-ics medres_merger.hdf5 \
+  --out-params medres_merger.yml \
   --run-name medres_merger \
-  --snapshot-basename Runs/medres_cpp/snapshot \
+  --snapshot-basename snapshot \
   --n-galaxies 2 \
   --xs 500 700 \
   --ys 590 610 \
@@ -49,10 +45,10 @@ python -m swift_spiral_ics.cli.generate \
   --Q-gas 1.5 \
   --bulge-rmax-scale 50
 
-"$SWIFT_BIN" $EAGLE_FLAGS --threads=4 Runs/medres_cpp/medres_merger.yml
+"$SWIFT_BIN" $EAGLE_FLAGS --threads=4 medres_merger.yml
 
 if [[ "$MAKE_MOVIE" == "1" ]]; then
-  python create_movie.py Runs/medres_cpp \
+  python ../../create_movie.py . \
     --width-kpc 320 \
     --npix 420 \
     --fps 12 \

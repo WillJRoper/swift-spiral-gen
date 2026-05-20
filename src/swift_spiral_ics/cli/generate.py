@@ -499,6 +499,7 @@ def add_uniform_background(
     rho_gas: float,
     rho_dm: float,
     grid_spacing: float,
+    radius: float | None,
     rng: np.random.Generator,
 ) -> dict:
     """Add uniform background gas and DM to the combined particle set.
@@ -510,6 +511,7 @@ def add_uniform_background(
         rho_gas: Background gas density (Msun / kpc^3).
         rho_dm: Background DM density (Msun / kpc^3).
         grid_spacing: Grid spacing for background particles (kpc).
+        radius: Optional spherical cutoff radius for background particles (kpc).
         rng: Random number generator.
 
     Returns:
@@ -527,32 +529,79 @@ def add_uniform_background(
 
     use_grid = grid_spacing > 0
     half_box = box_size / 2.0
+    if radius is not None and radius <= 0:
+        raise ValueError("background radius must be positive")
+
+    radius_sq = None if radius is None else radius**2
+
+    def _keep_in_background_region(pos: np.ndarray) -> np.ndarray:
+        if radius_sq is None or pos.size == 0:
+            return pos
+        return pos[np.sum(pos**2, axis=1) <= radius_sq]
+
+    def _limit_to_background_region(pos: np.ndarray) -> np.ndarray:
+        if radius is None or pos.size == 0:
+            return pos
+        radii = np.linalg.norm(pos, axis=1)
+        mask = radii > radius
+        if not np.any(mask):
+            return pos
+        clipped = pos.copy()
+        clipped[mask] *= (radius / radii[mask])[:, None]
+        return clipped
+
+    if radius is None:
+        target_volume = volume
+    else:
+        target_volume = (4.0 / 3.0) * np.pi * radius**3
 
     if not use_grid:
         # Add random background particles
         if rho_dm > 0:
-            n_dm = int(round(rho_dm * volume / m_part)) # Uses m_part for random bg
+            n_dm = int(round(rho_dm * target_volume / m_part)) # Uses m_part for random bg
             if n_dm > 0:
-                pos_dm = rng.uniform(-half_box, half_box, (n_dm, 3))
+                if radius is None:
+                    pos_dm = rng.uniform(-half_box, half_box, (n_dm, 3))
+                else:
+                    pos_dm = np.empty((0, 3), dtype=float)
+                    while len(pos_dm) < n_dm:
+                        trial_pos = rng.uniform(-radius, radius, (max(n_dm, 1024), 3))
+                        accepted = _keep_in_background_region(trial_pos)
+                        if accepted.size == 0:
+                            continue
+                        pos_dm = np.vstack([pos_dm, accepted])
+                    pos_dm = pos_dm[:n_dm]
                 vel_dm = np.zeros((n_dm, 3), dtype=float)
                 mass_dm = np.full(n_dm, m_part)
 
                 updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], pos_dm])
                 updated["dm"]["vel"] = np.vstack([updated["dm"]["vel"], vel_dm])
                 updated["dm"]["mass"] = np.concatenate([updated["dm"]["mass"], mass_dm])
-                print(f"  Added uniform DM background (random): N={n_dm}, rho={rho_dm:.3e} Msun/kpc^3")
+                region_label = f", r<={radius:.1f} kpc" if radius is not None else ""
+                print(f"  Added uniform DM background (random): N={n_dm}, rho={rho_dm:.3e} Msun/kpc^3{region_label}")
 
         if rho_gas > 0:
-            n_gas = int(round(rho_gas * volume / m_part)) # Uses m_part for random bg
+            n_gas = int(round(rho_gas * target_volume / m_part)) # Uses m_part for random bg
             if n_gas > 0:
-                pos_gas = rng.uniform(-half_box, half_box, (n_gas, 3))
+                if radius is None:
+                    pos_gas = rng.uniform(-half_box, half_box, (n_gas, 3))
+                else:
+                    pos_gas = np.empty((0, 3), dtype=float)
+                    while len(pos_gas) < n_gas:
+                        trial_pos = rng.uniform(-radius, radius, (max(n_gas, 1024), 3))
+                        accepted = _keep_in_background_region(trial_pos)
+                        if accepted.size == 0:
+                            continue
+                        pos_gas = np.vstack([pos_gas, accepted])
+                    pos_gas = pos_gas[:n_gas]
                 vel_gas = np.zeros((n_gas, 3), dtype=float)
                 mass_gas = np.full(n_gas, m_part)
 
                 updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], pos_gas])
                 updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
                 updated["gas"]["mass"] = np.concatenate([updated["gas"]["mass"], mass_gas])
-                print(f"  Added uniform gas background (random): N={n_gas}, rho={rho_gas:.3e} Msun/kpc^3")
+                region_label = f", r<={radius:.1f} kpc" if radius is not None else ""
+                print(f"  Added uniform gas background (random): N={n_gas}, rho={rho_gas:.3e} Msun/kpc^3{region_label}")
 
     else:
         # Add grid background particles (centered on origin)
@@ -560,34 +609,37 @@ def add_uniform_background(
         if coords_1d.size > 0:
             gx, gy, gz = np.meshgrid(coords_1d, coords_1d, coords_1d, indexing="ij")
             grid_positions = np.column_stack([gx.ravel(), gy.ravel(), gz.ravel()])
+            grid_positions = _keep_in_background_region(grid_positions)
             n_grid = len(grid_positions)
 
             # Add small random jitter
             jitter_gas = rng.normal(scale=0.1 * grid_spacing, size=grid_positions.shape)
             jitter_dm = rng.normal(scale=0.1 * grid_spacing, size=grid_positions.shape)
-            gas_grid = grid_positions + jitter_gas
-            dm_grid = grid_positions + jitter_dm
+            gas_grid = _limit_to_background_region(grid_positions + jitter_gas)
+            dm_grid = _limit_to_background_region(grid_positions + jitter_dm)
 
             # Calculate mass per particle to match target density
             if rho_gas > 0:
-                m_gas_bg = (rho_gas * volume) / n_grid
+                m_gas_bg = (rho_gas * target_volume) / n_grid
                 vel_gas = np.zeros((n_grid, 3), dtype=float)
                 mass_gas = np.full(n_grid, m_gas_bg)
 
                 updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], gas_grid])
                 updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
                 updated["gas"]["mass"] = np.concatenate([updated["gas"]["mass"], mass_gas])
-                print(f"  Added grid gas background: spacing={grid_spacing} kpc, N={n_grid}, m={m_gas_bg:.2e} Msun")
+                region_label = f", r<={radius:.1f} kpc" if radius is not None else ""
+                print(f"  Added grid gas background: spacing={grid_spacing} kpc, N={n_grid}, m={m_gas_bg:.2e} Msun{region_label}")
 
             if rho_dm > 0:
-                m_dm_bg = (rho_dm * volume) / n_grid
+                m_dm_bg = (rho_dm * target_volume) / n_grid
                 vel_dm = np.zeros((n_grid, 3), dtype=float)
                 mass_dm = np.full(n_grid, m_dm_bg)
 
                 updated["dm"]["pos"] = np.vstack([updated["dm"]["pos"], dm_grid])
                 updated["dm"]["vel"] = np.vstack([updated["dm"]["vel"], vel_dm])
                 updated["dm"]["mass"] = np.concatenate([updated["dm"]["mass"], mass_dm])
-                print(f"  Added grid DM background: spacing={grid_spacing} kpc, N={n_grid}, m={m_dm_bg:.2e} Msun")
+                region_label = f", r<={radius:.1f} kpc" if radius is not None else ""
+                print(f"  Added grid DM background: spacing={grid_spacing} kpc, N={n_grid}, m={m_dm_bg:.2e} Msun{region_label}")
 
     return updated
 
@@ -867,6 +919,12 @@ def main():
     parser.add_argument(
         "--bg-grid-kpc", type=float, default=0.0, help="Grid spacing for background particles (0 for random)."
     )
+    parser.add_argument(
+        "--bg-radius-kpc",
+        type=float,
+        default=None,
+        help="Optional spherical cutoff radius for background particles around the central galaxy in kpc.",
+    )
 
     # Misc
     parser.add_argument(
@@ -926,7 +984,7 @@ def main():
         for galaxy_data in all_galaxies_pos_mass:
             for component in ("dm", "gas", "stars", "bulge"):
                 masses = galaxy_data[component]["mass"]
-                if masses.size > 0:
+                if masses.size > 0 and masses[0] > 0:
                     component_particle_masses.append(float(masses[0]))
         background_particle_mass = min(component_particle_masses) if component_particle_masses else 1e7
         initial_combined_data = add_uniform_background(
@@ -936,6 +994,7 @@ def main():
             args.bg_gas_density_msun_kpc3,
             args.bg_dm_density_msun_kpc3,
             args.bg_grid_kpc,
+            args.bg_radius_kpc,
             rng,
         )
 
