@@ -37,6 +37,7 @@ swift-spiral-ics \
   --nz-grid 160 \
   --eps-grid 0.8 \
   --h-max-cell-fraction 0.7 \
+  --max-top-level-cells 64 \
   --scheduler-tasks-per-cell 500000 \
   --bg-gas-density-msun-kpc3 1000 \
   --bg-grid-kpc 0 \
