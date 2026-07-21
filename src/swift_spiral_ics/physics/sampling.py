@@ -1,22 +1,36 @@
 """Particle sampling functions for galaxy components."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from scipy import optimize
+from numba import njit
 from scipy.special import lambertw
 from tqdm import tqdm
-from numba import njit
-from .profiles import nfw_params, nfw_density, nfw_mass, hernquist_density, hernquist_mass, disc_sigma_0, exponential_surface_density
-from .kinematics import escape_velocity, jeans_dispersion_spherical, asymmetric_drift_correction, disc_velocity_dispersions, gas_dispersion_from_temperature, toomre_q_dispersion
-from .potentials import total_circular_velocity
-from .perturbations import bar_density_modulation, bar_streaming_velocity, apply_position_perturbation_bar, spiral_streaming_velocity
+
+from .kinematics import (
+    escape_velocity_from_grid,
+    jeans_dispersion_spherical_from_grid,
+)
+from .perturbations import (
+    apply_position_perturbation_bar,
+    bar_density_modulation,
+    bar_streaming_velocity,
+    spiral_streaming_velocity,
+)
+from .profiles import nfw_params  # Keep for sampling positions
+
+if TYPE_CHECKING:
+    from .grid_solver import GalaxyGridSolver
 
 
 @njit
 def _spiral_modulation_jit(
-    R: np.ndarray, 
-    phi: np.ndarray, 
-    arm_strength: float, 
-    n_arms: int, 
+    R: np.ndarray,
+    phi: np.ndarray,
+    arm_strength: float,
+    n_arms: int,
     pitch_deg: float,
     R_d: float
 ) -> np.ndarray:
@@ -24,7 +38,7 @@ def _spiral_modulation_jit(
     # Hardcoded parameters matching standard logic
     R_min = 0.5 * R_d
     R_max = 5.0 * R_d
-    
+
     # Envelope
     envelope = np.ones_like(R)
     for i in range(len(R)):
@@ -37,19 +51,19 @@ def _spiral_modulation_jit(
             envelope[i] = 0.0
         elif r_val > R_max - 2.0:
             envelope[i] = (R_max - r_val) / 2.0
-            
+
     # Phase
     pitch_rad = pitch_deg * np.pi / 180.0
     tan_pitch = np.tan(pitch_rad)
     R_0 = 8.0 # Reference radius
-    
+
     # Phase calculation
     # phase = n_arms * (phi - log(R/R_0)/tan_pitch)
     phase = np.zeros_like(phi)
     for i in range(len(R)):
         if R[i] > 0:
             phase[i] = n_arms * (phi[i] - np.log(R[i] / R_0) / tan_pitch)
-            
+
     # Modulation
     modulation = 1.0 + arm_strength * envelope * np.cos(phase)
     return modulation
@@ -91,16 +105,16 @@ def sample_nfw_halo(
     # Enforce a minimum radius to avoid singularity at r=0
     r_min = 1e-3  # kpc, 1 pc minimum radius
     r_grid = np.geomspace(max(r_min, 1e-4 * r_s), r_max, n_grid)
-    
+
     cdf_grid = cumulative_mass_fraction(r_grid)
-    
+
     # Ensure strict monotonicity and boundary conditions
     cdf_grid = cdf_grid - cdf_grid[0] # Shift so it starts at 0 relative to r_min
     cdf_grid = cdf_grid / cdf_grid[-1] # Normalize to 1
-    
+
     # Sample uniform random numbers
     u = rng.uniform(0, 1, N)
-    
+
     # Interpolate to get radii
     r = np.interp(u, cdf_grid, r_grid)
 
@@ -121,6 +135,7 @@ def sample_hernquist_bulge(
     m_bulge: float,
     a: float,
     rng: np.random.Generator,
+    r_max: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample particle positions for Hernquist bulge.
 
@@ -129,12 +144,17 @@ def sample_hernquist_bulge(
         m_bulge: Total bulge mass (Msun).
         a: Hernquist scale length (kpc).
         rng: Random number generator.
+        r_max: Optional truncation radius (kpc).
 
     Returns:
         Tuple of (x, y, z) positions (kpc).
     """
-    # Inverse CDF for Hernquist: r = a * sqrt(u) / (1 - sqrt(u))
-    u = rng.uniform(0, 1, N)
+    # Inverse CDF for Hernquist: r = a * sqrt(u) / (1 - sqrt(u)).
+    # If truncated, draw only up to F(r_max) and renormalize by construction.
+    u_max = 1.0
+    if r_max is not None:
+        u_max = (r_max / (r_max + a)) ** 2
+    u = rng.uniform(0, u_max, N)
     sqrt_u = np.sqrt(u)
     r = a * sqrt_u / (1 - sqrt_u)
 
@@ -197,41 +217,41 @@ def sample_exponential_disc(
             # Rejection sample until all are accepted
             max_iters = 100
             keep = np.zeros(N, dtype=bool)
-            
+
             pbar = tqdm(total=N, desc="Sampling spiral arms")
-            
+
             for _ in range(max_iters):
                 # Calculate modulation for current candidates using JIT
                 modulation = _spiral_modulation_jit(
                     R[~keep], phi[~keep], arm_strength, n_arms, pitch_deg, R_d
                 )
-                
+
                 # Acceptance probability: rho_pert / rho_max
                 # rho_max is rho_base * (1 + arm_strength)
                 accept_prob = modulation / (1.0 + arm_strength)
-                
+
                 draw = rng.uniform(0, 1, np.count_nonzero(~keep))
                 newly_kept_local = draw < accept_prob
-                
+
                 # Update global keep mask
                 # Need to map local True/False back to full array indices
                 indices_to_check = np.where(~keep)[0]
                 indices_kept = indices_to_check[newly_kept_local]
                 keep[indices_kept] = True
-                
+
                 pbar.update(len(indices_kept))
-                
+
                 if np.all(keep):
                     break
-                
+
                 # Resample R, phi for remaining rejects
                 idx_reject = np.where(~keep)[0]
                 u_new = rng.uniform(0, 1, idx_reject.size)
                 R[idx_reject] = _sample_R(u_new)
                 phi[idx_reject] = rng.uniform(0, 2 * np.pi, idx_reject.size)
-            
+
             pbar.close()
-            
+
             if not np.all(keep):
                 print(f"Warning: Spiral arm sampling did not fully converge after {max_iters} iterations. {np.count_nonzero(~keep)} particles may be biased.")
 
@@ -273,33 +293,16 @@ def sample_halo_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
-    m200: float,
-    c200: float,
-    m_bulge: float,
-    a_bulge: float,
-    M_disc_star: float,
-    R_d_star: float,
-    z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
+    mass_halo: np.ndarray,
     rng: np.random.Generator,
+    grid_solver: GalaxyGridSolver,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for halo particles using Jeans equation.
 
     Args:
         x, y, z: Particle positions (kpc).
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
+        grid_solver: Instance of GalaxyGridSolver with computed potential.
 
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
@@ -308,25 +311,17 @@ def sample_halo_velocities(
     R = np.sqrt(x**2 + y**2)
     r = np.sqrt(x**2 + y**2 + z**2)
 
-    # Get dispersions from Jeans equation
-    # Halo density for Jeans equation (only halo supports itself via dispersion shape, 
-    # but potential is total)
-    r_s, delta_c = nfw_params(m200, c200) # This is needed for the profile shape
-    
-    sigma_r = jeans_dispersion_spherical(
+    # Get dispersions from Jeans equation using grid potential
+    sigma_r = jeans_dispersion_spherical_from_grid(
         r,
-        profile_type="nfw",
-        m200=m200, c200=c200,
-        m_bulge=m_bulge, a_bulge=a_bulge,
-        M_disc_star=M_disc_star, R_d_star=R_d_star, z_d_star=z_d_star,
-        M_disc_gas=M_disc_gas, R_d_gas=R_d_gas, z_d_gas=z_d_gas,
+        grid_solver=grid_solver,
+        pos_comp=np.column_stack([x, y, z]),
+        mass_comp=mass_halo,
         beta=0.0
     )
 
     # Sample velocities from Gaussian (truncated at escape velocity)
-    v_esc = escape_velocity(
-        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-    )
+    v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
     vx = rng.normal(0, sigma_r, N)
     vy = rng.normal(0, sigma_r, N)
@@ -336,6 +331,7 @@ def sample_halo_velocities(
     v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
     too_fast = v_mag > v_esc
     if np.any(too_fast):
+        # Rescale to 99% of escape velocity
         rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
         vx[too_fast] *= rescale
         vy[too_fast] *= rescale
@@ -348,35 +344,16 @@ def sample_bulge_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
-    m200: float,
-    c200: float,
-    m_bulge: float,
-    a_bulge: float,
-    M_disc_star: float,
-    R_d_star: float,
-    z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
+    mass_bulge: np.ndarray,
     rng: np.random.Generator,
+    grid_solver: GalaxyGridSolver,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for bulge particles using Jeans equation.
 
-    Similar to halo but uses Hernquist profile for dispersions.
-
     Args:
         x, y, z: Particle positions (kpc).
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
+        grid_solver: Instance of GalaxyGridSolver with computed potential.
 
     Returns:
         Tuple of (vx, vy, vz) velocities (km/s).
@@ -386,20 +363,16 @@ def sample_bulge_velocities(
     r = np.sqrt(x**2 + y**2 + z**2)
 
     # Get dispersions
-    sigma_r = jeans_dispersion_spherical(
+    sigma_r = jeans_dispersion_spherical_from_grid(
         r,
-        profile_type="hernquist",
-        m200=m200, c200=c200,
-        m_bulge=m_bulge, a_bulge=a_bulge,
-        M_disc_star=M_disc_star, R_d_star=R_d_star, z_d_star=z_d_star,
-        M_disc_gas=M_disc_gas, R_d_gas=R_d_gas, z_d_gas=z_d_gas,
+        grid_solver=grid_solver,
+        pos_comp=np.column_stack([x, y, z]),
+        mass_comp=mass_bulge,
         beta=0.0
     )
 
     # Sample velocities
-    v_esc = escape_velocity(
-        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-    )
+    v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
     vx = rng.normal(0, sigma_r, N)
     vy = rng.normal(0, sigma_r, N)
@@ -409,6 +382,7 @@ def sample_bulge_velocities(
     v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
     too_fast = v_mag > v_esc
     if np.any(too_fast):
+        # Rescale to 99% of escape velocity
         rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
         vx[too_fast] *= rescale
         vy[too_fast] *= rescale
@@ -421,21 +395,13 @@ def sample_disc_velocities(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
+    mass_disc: np.ndarray,
     M_disc: float,
     R_d: float,
     z_d: float,
     Q_target: float,
-    m200: float,
-    c200: float,
-    m_bulge: float,
-    a_bulge: float,
-    M_disc_star: float,
-    R_d_star: float,
-    z_d_star: float,
-    M_disc_gas: float,
-    R_d_gas: float,
-    z_d_gas: float,
     rng: np.random.Generator,
+    grid_solver: GalaxyGridSolver,
     spiral_params: dict | None = None,
     bar_params: dict | None = None,
     is_gas: bool = False,
@@ -448,17 +414,8 @@ def sample_disc_velocities(
         R_d: This disc's scale length (kpc).
         z_d: This disc's scale height (kpc).
         Q_target: Target Toomre Q parameter.
-        m200: Halo M200 mass (Msun).
-        c200: Halo concentration.
-        m_bulge: Bulge mass (Msun).
-        a_bulge: Bulge scale length (kpc).
-        M_disc_star: Total stellar disc mass (Msun).
-        R_d_star: Stellar disc scale length (kpc).
-        z_d_star: Stellar disc scale height (kpc).
-        M_disc_gas: Gas disc mass (Msun).
-        R_d_gas: Gas disc scale length (kpc).
-        z_d_gas: Gas disc scale height (kpc).
         rng: Random number generator.
+        grid_solver: Instance of GalaxyGridSolver with computed potential.
         spiral_params: Optional dict with spiral arm parameters.
         bar_params: Optional dict with bar parameters.
         is_gas: If True, use temperature-based dispersion instead of Q.
@@ -470,82 +427,10 @@ def sample_disc_velocities(
     R = np.sqrt(x**2 + y**2)
     phi = np.arctan2(y, x)
 
-    # Get circular velocity
-    R_unique = np.linspace(1e-3, 30, 200) # Ensure no R=0
-    v_c_profile = total_circular_velocity(
-        R_unique,
-        m200,
-        c200,
-        m_bulge,
-        a_bulge,
-        M_disc_star,
-        R_d_star,
-        z_d_star,
-        M_disc_gas,
-        R_d_gas,
-        z_d_gas,
+    # Get kinematic profiles from grid_solver
+    v_c, sigma_R, sigma_phi, sigma_z, v_phi_mean = grid_solver.get_cylindrical_kinematics(
+        R, np.column_stack([x, y, z]), mass_disc, M_disc, R_d, z_d, Q_target, is_gas
     )
-
-    # Calculate dispersion profiles on the grid
-    sigma_0 = disc_sigma_0(M_disc, R_d)
-    sigma_surf_profile = exponential_surface_density(R_unique, sigma_0, R_d)
-    
-    if is_gas:
-        # Temperature based
-        T_gas = 1e4
-        sigma_thermal = gas_dispersion_from_temperature(T_gas)
-        sigma_R_profile = np.full_like(R_unique, sigma_thermal)
-    else:
-        # Toomre Q based
-        sigma_R_profile = toomre_q_dispersion(
-            R_unique, v_c_profile, sigma_surf_profile, Q_target,
-            m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-        )
-        
-    # Ensure gas has thermal floor (if Q based logic was used for gas, but here we separated it)
-    # If is_gas=False, checking floor is still good practice for stability
-    if not is_gas:
-        sigma_R_profile = np.maximum(sigma_R_profile, 5.0)
-
-    sigma_phi_profile, sigma_z_profile = disc_velocity_dispersions(R_unique, sigma_R_profile)
-
-    # Calculate asymmetric drift numerically on the grid
-    # v_phi^2 = v_c^2 + sigma_R^2 * (dln(nu)/dlnR + dln(sigma_R^2)/dlnR + 1 - (sigma_phi/sigma_R)^2)
-    # derivatives wrt R: dlnX/dlnR = R * dlnX/dR
-    
-    # Gradient of log Surface Density
-    # For exponential, this is analytically -1/R_d, but let's be consistent numerically
-    ln_Sigma = np.log(sigma_surf_profile)
-    d_ln_Sigma_dR = np.gradient(ln_Sigma, R_unique)
-    
-    # Gradient of log sigma_R^2
-    ln_sigma2 = np.log(sigma_R_profile**2)
-    d_ln_sigma2_dR = np.gradient(ln_sigma2, R_unique)
-    
-    # Anisotropy term
-    ratio_sq = (sigma_phi_profile / sigma_R_profile)**2
-    term_anisotropy = 1.0 - ratio_sq
-    
-    # Jeans equation terms (all multiplied by R/sigma_R^2 in some forms, but here we use derivatives wrt R)
-    # Force balance: v_c^2/R - v_phi^2/R = -1/rho * d(rho sigma^2)/dR - ...
-    # v_phi^2 = v_c^2 + (R/rho) * d(rho sigma^2)/dR
-    #         = v_c^2 + R * sigma_R^2 * (dlnRho/dR + dlnSigma2/dR)
-    # (Simplified for thin disc, neglecting sigma_z term)
-    
-    # Correct formula: v_phi^2 = v_c^2 + sigma_R^2 * [ R * (dlnSigma/dR + dlnSigma2/dR) + (1 - ratio_sq) ]
-    # Note: The derivative terms are usually negative, so they reduce velocity.
-    # dlnSigma/dR is negative.
-    
-    bracket = R_unique * (d_ln_Sigma_dR + d_ln_sigma2_dR) + term_anisotropy
-    v_phi_sq_profile = v_c_profile**2 + sigma_R_profile**2 * bracket
-    v_phi_profile = np.sqrt(np.maximum(v_phi_sq_profile, 0.0))
-
-    # Interpolate to particle positions
-    v_c = np.interp(R, R_unique, v_c_profile)
-    sigma_R = np.interp(R, R_unique, sigma_R_profile)
-    sigma_phi = np.interp(R, R_unique, sigma_phi_profile)
-    sigma_z = np.interp(R, R_unique, sigma_z_profile)
-    v_phi_mean = np.interp(R, R_unique, v_phi_profile)
 
     # Add spiral streaming if present
     v_R_stream = np.zeros(N)
@@ -585,11 +470,7 @@ def sample_disc_velocities(
     vz = v_z
 
     # Truncate at escape velocity (safety check)
-    from .kinematics import escape_velocity
-
-    v_esc = escape_velocity(
-        R, z, m200, c200, m_bulge, a_bulge, M_disc_star, R_d_star, z_d_star, M_disc_gas, R_d_gas, z_d_gas
-    )  # Note: escape_velocity signature needs update or checking, assuming it takes all mass components
+    v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
     v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
     too_fast = v_mag > v_esc

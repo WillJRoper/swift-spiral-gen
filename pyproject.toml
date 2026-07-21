@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=65.0", "wheel"]
+requires = ["setuptools>=65.0", "wheel", "pybind11"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -54,6 +54,7 @@ swift-spiral-movie = "swift_spiral_ics.cli.movie:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["swift_spiral_ics*", "swift_spiral_ics.physics._grid_solver_cpp"]
 
 [tool.setuptools.package-data]
 "swift_spiral_ics" = ["templates/*.yml"]

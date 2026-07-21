@@ -7,18 +7,20 @@ from pathlib import Path
 
 import imageio
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import swiftsimio
 import unyt
 from swiftsimio.visualisation.projection import project_pixel_grid
+from swiftsimio.visualisation.smoothing_length.generate import generate_smoothing_lengths
 from tqdm import tqdm
 
 
 def render_snapshot(
     data: swiftsimio.SWIFTDataset,
-    bins: int = 512,
+    bins: int = 256,
     show_vel: bool = False,
     vel_subsample: int = 500,
     render_component: str = "combined",
@@ -29,24 +31,26 @@ def render_snapshot(
         data: Loaded swiftsimio dataset.
         bins: Number of bins for density projection.
         show_vel: If True, overlay velocity vectors.
-        vel_subsample: Number of particles to show for velocity field.
+        vel_subsample: Number of particles for velocity field.
         render_component: Which component to render ('gas', 'stars', 'dm', or 'combined').
 
     Returns:
         RGB image array (H, W, 3).
     """
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-    box_size_unyt = data.metadata.boxsize[0].to("kpc")
-    box_size = box_size_unyt.value
+    # Use native units of the data (Mpc)
+    box_size_unyt = data.metadata.boxsize[0] # This will be in Mpc
+    box_size = box_size_unyt.value # This will be the float value in Mpc
 
     # Project density map
     combined_density = np.zeros((bins, bins))
-    
-    # Define grid with units
-    region = [0 * unyt.kpc, box_size_unyt, 0 * unyt.kpc, box_size_unyt] 
-    
+
+    # Define grid with units in Mpc
+    region = [0 * unyt.Mpc, box_size_unyt, 0 * unyt.Mpc, box_size_unyt]
+
     if render_component == "gas" or render_component == "combined":
         if hasattr(data, "gas") and len(data.gas.coordinates) > 0:
+            print("    Rendering gas (SPH)...") # Revert to SPH
             gas_map = project_pixel_grid(
                 data=data.gas,
                 resolution=bins,
@@ -58,33 +62,37 @@ def render_snapshot(
 
     if render_component == "stars" or render_component == "combined":
         if hasattr(data, "stars") and len(data.stars.coordinates) > 0:
+            print("    Rendering stars (histogram)...")
+            # Use histogram for stars - much faster and usually sufficient
             star_map = project_pixel_grid(
                 data=data.stars,
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region
+                region=region,
+                backend="histogram"
             )
             combined_density += star_map.value * 0.5 # Weight 0.5
 
     if render_component == "dm" or render_component == "combined":
-        if hasattr(data, "dm") and len(data.dm.coordinates) > 0:
+        if hasattr(data, "dark_matter") and len(data.dark_matter.coordinates) > 0:
+            print("    Rendering DM (SPH/subsampled)...")
             dm_map = project_pixel_grid(
-                data=data.dm,
+                data=data.dark_matter,
                 resolution=bins,
                 project="masses",
                 parallel=True,
-                region=region
+                region=region,
+                backend="subsampled" # Use subsampled backend which uses smoothing lengths
             )
-            combined_density += dm_map.value * 0.1 # Lower weight for DM as it's typically more diffuse
-
+            combined_density += dm_map.value * 1.0 # Increased weight for DM to 1.0
 
     # Plot density
     extent = [0, box_size, 0, box_size]
-    
+
     # Handle log scale safely
     density_log = np.log10(combined_density + 1e-10) # 1e-10 floor
-    
+
     # Use swiftsimio-like colormap or inferno
     ax.imshow(
         density_log,
@@ -109,9 +117,9 @@ def render_snapshot(
 
         # Only plot vectors inside the box
         mask = (x >= 0) & (x <= box_size) & (y >= 0) & (y <= box_size)
-        
+
         ax.quiver(
-            x[mask], y[mask], vx[mask], vy[mask], 
+            x[mask], y[mask], vx[mask], vy[mask],
             color="white", alpha=0.3, scale=1000, width=0.002
         )
 
@@ -128,8 +136,8 @@ def render_snapshot(
         bbox={"boxstyle": "round", "facecolor": "black", "alpha": 0.5},
     )
 
-    ax.set_xlabel("x (kpc)")
-    ax.set_ylabel("y (kpc)")
+    ax.set_xlabel("x (Mpc)")
+    ax.set_ylabel("y (Mpc)")
     ax.set_xlim(0, box_size)
     ax.set_ylim(0, box_size)
 
@@ -224,7 +232,7 @@ def main():
     parser.add_argument("--out-movie", type=str, default="movie.mp4", help="Output movie file")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second")
     parser.add_argument(
-        "--bins", type=int, default=512, help="Number of bins for density projection"
+        "--bins", type=int, default=256, help="Number of bins for density projection"
     )
     parser.add_argument("--show-vel", action="store_true", help="Show velocity field overlay")
     parser.add_argument(
@@ -235,11 +243,11 @@ def main():
     )
 
     args = parser.parse_args()
-    
+
     print("=" * 70)
     print("SWIFT SNAPSHOT MOVIE MAKER (swiftsimio)")
     print("=" * 70)
-    
+
     # Check if first arg is a glob pattern that didn't expand (e.g. quoted)
     if len(args.snapshots) == 1 and "*" in args.snapshots[0]:
         snapshot_files = sorted(Path(".").glob(args.snapshots[0]))
@@ -248,7 +256,7 @@ def main():
         snapshot_files.sort()
 
     if len(snapshot_files) == 0:
-        print(f"\nError: No files found.")
+        print("\nError: No files found.")
         sys.exit(1)
 
     print(f"\nFound {len(snapshot_files)} snapshots")
@@ -270,7 +278,26 @@ def main():
 
     for snap_file in tqdm(snapshot_files, desc="Loading and Rendering Snapshots"):
         data = swiftsimio.load(str(snap_file))
-        
+
+        # Explicitly generate smoothing lengths for DM if not present
+        if hasattr(data, "dark_matter") and not hasattr(data.dark_matter, "smoothing_length"):
+            print("    Generating smoothing lengths for DM particles...")
+            # swiftsimio's generate_smoothing_lengths uses a default N_ngb=58 for SPH
+            h = generate_smoothing_lengths(
+                data.dark_matter.coordinates,
+                boxsize=data.metadata.boxsize,
+                kernel_gamma=1.8,
+                neighbours=58
+            )
+            data.dark_matter.smoothing_length = h
+            print("    DM smoothing lengths generated.")
+
+        # Debugging: check if DM data is loaded
+        if hasattr(data, "dark_matter") and hasattr(data.dark_matter, "coordinates"):
+            print(f"  Loaded DM particles: {len(data.dark_matter.coordinates)} (total mass: {np.sum(data.dark_matter.masses).to('Msun'):.2e})")
+        else:
+            print("  No DM particles found in swiftsimio data object.")
+
         if args.separate_movies:
             for comp in components_to_render:
                 img = render_snapshot(data, args.bins, args.show_vel, args.vel_subsample, render_component=comp)
@@ -286,7 +313,7 @@ def main():
         if not frames_list:
             print(f"No frames rendered for {comp}.")
             continue
-        
+
         output_filename = Path(args.out_movie).parent / f"{Path(args.out_movie).stem}_{comp}.mp4"
         print(f"\nCreating movie for {comp}: {output_filename}")
         create_movie_ffmpeg(frames_list, str(output_filename), args.fps)

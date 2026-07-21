@@ -32,8 +32,8 @@ def spiral_arm_phase(
 
 
 def spiral_arm_amplitude(
-    R: np.ndarray, 
-    R_min: float = 2.0, 
+    R: np.ndarray,
+    R_min: float = 2.0,
     R_max: float = 15.0,
     R_d: float | None = None
 ) -> np.ndarray:
@@ -72,10 +72,10 @@ def spiral_arm_amplitude(
 
 
 def spiral_density_modulation(
-    R: np.ndarray, 
-    phi: np.ndarray, 
-    arm_strength: float, 
-    n_arms: int, 
+    R: np.ndarray,
+    phi: np.ndarray,
+    arm_strength: float,
+    n_arms: int,
     pitch_deg: float,
     R_d: float | None = None
 ) -> np.ndarray:

@@ -22,9 +22,9 @@ Cosmology:
 # Parameters governing the time integration
 TimeIntegration:
   dt_min: __DT_MIN_GYR__
-  dt_max:     1e-2  # The maximal time-step size of the simulation (in internal units).
+  dt_max:     __DT_MAX_GYR__  # The maximal time-step size of the simulation (in internal units).
   time_begin: 0.0
-  time_end:   10
+  time_end:   __TIME_END__
   
 # Parameters governing the snapshots
 Snapshots:
@@ -48,10 +48,10 @@ Gravity:
   theta_cr:                    0.7       # Opening angle (Multipole acceptance criterion)
   epsilon_fmm:                 0.001     # Adaptive opening angle
   mesh_side_length:            512
-  comoving_DM_softening:         0.003320 # Comoving softening for DM (3.32 ckpc)
-  max_physical_DM_softening:     0.001300 # Physical softening for DM (1.30 pkpc)
-  comoving_baryon_softening:     0.001790 # Comoving softening for baryons (1.79 ckpc)
-  max_physical_baryon_softening: 0.000700 # Physical softening for baryons (0.70 pkpc)
+  comoving_DM_softening: __SOFTENING__ # Comoving softening for DM (3.32 ckpc)
+  max_physical_DM_softening: __SOFTENING__ # Physical softening for DM (1.30 pkpc)
+  comoving_baryon_softening: __SOFTENING__ # Comoving softening for baryons (1.79 ckpc)
+  max_physical_baryon_softening: __SOFTENING__ # Physical softening for baryons (0.70 pkpc)
 
 # Parameters for the hydrodynamics scheme
 SPH:
@@ -134,7 +134,7 @@ EAGLECooling:
 
 # PS2020 cooling parameters
 PS2020Cooling:
-  dir_name:                ./UV_dust1_CR1_G1_shield1.hdf5 # Location of the cooling tables
+  dir_name:                ./data/UV_dust1_CR1_G1_shield1.hdf5 # Location of the cooling tables
   H_reion_z:               7.5               # Redshift of Hydrogen re-ionization (Planck 2018)
   H_reion_eV_p_H:          2.0
   He_reion_z_centre:       3.5               # Redshift of the centre of the Helium re-ionization Gaussian

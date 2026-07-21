@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 
 from swift_spiral_ics.io.swift_writer import write_swift_ic
 from swift_spiral_ics.io.yaml_writer import generate_swift_params, write_yaml_file
@@ -218,6 +219,19 @@ class TestYamlWriter:
 
         assert isinstance(params, str)
         assert "__RUN_NAME__" not in params
+        assert "periodic:   1" in params
+        assert "cell_split_size" not in params
+
+    def test_generate_swift_params_scales_feedback(self):
+        """Test YAML generation applies relative SNII feedback scaling."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=100.0,
+            feedback_scale=0.1,
+        )
+
+        assert "SNII_energy_fraction_min:             0.0388" in params
+        assert "SNII_energy_fraction_max:             0.737" in params
         assert "run_name:" in params
         assert "file_name:  test.hdf5" in params
         assert "basename:            snap" in params
@@ -234,7 +248,57 @@ class TestYamlWriter:
         )
 
         assert "run_name:   custom-run" in params
-        assert "delta_time:          0.005" in params
+        assert "delta_time:          5.113560131679326e-06" in params
+
+    def test_generate_swift_params_custom_h_max_fraction(self):
+        """Custom h_max cell fraction is reflected in the YAML."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=1600.0,
+            h_max_cell_fraction=0.8,
+        )
+
+        assert "h_max:                             0.08" in params
+
+    def test_generate_swift_params_custom_scheduler_tasks_per_cell(self):
+        """Custom scheduler task budget is reflected in the YAML."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=100.0,
+            scheduler_tasks_per_cell=500000,
+        )
+
+        assert "tasks_per_cell:        500000" in params
+
+    def test_generate_swift_params_custom_max_top_level_cells(self):
+        """Custom top-level cell count is reflected in the YAML and h_max scaling."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=1600.0,
+            h_max_cell_fraction=0.8,
+            max_top_level_cells=32,
+        )
+
+        assert "max_top_level_cells:   32" in params
+        assert "h_max:                             0.04" in params
+
+    def test_generate_swift_params_rejects_non_positive_scheduler_tasks_per_cell(self):
+        """Scheduler task budget must be positive."""
+        with pytest.raises(ValueError, match="scheduler_tasks_per_cell must be positive"):
+            generate_swift_params(
+                ic_filename="test.hdf5",
+                box_size=100.0,
+                scheduler_tasks_per_cell=0,
+            )
+
+    def test_generate_swift_params_rejects_non_positive_max_top_level_cells(self):
+        """Top-level cell count must be positive."""
+        with pytest.raises(ValueError, match="max_top_level_cells must be positive"):
+            generate_swift_params(
+                ic_filename="test.hdf5",
+                box_size=100.0,
+                max_top_level_cells=0,
+            )
 
     def test_write_yaml_file(self):
         """Test YAML file writing."""

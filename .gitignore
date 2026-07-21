@@ -49,6 +49,8 @@ htmlcov/
 *.h5
 *.yml
 *.yaml
+!examples/*.yml
+!examples/*.yaml
 *.pdf
 *.png
 *.mp4
@@ -57,6 +59,13 @@ htmlcov/
 # Temporary
 temp_frames/
 ic_plots/
+
+# Keep only reusable run scripts/docs under Runs/
+Runs/**
+!Runs/**/
+!Runs/**/run.sh
+!Runs/**/submit.sh
+!Runs/**/README.md
 
 # Apple files 
 **.DS_Store

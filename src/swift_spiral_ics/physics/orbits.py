@@ -1,6 +1,7 @@
 """Orbital dynamics for galaxy mergers."""
 
 import numpy as np
+
 from .constants import G
 
 

@@ -8,14 +8,14 @@
 
 ## Setup, Build, and Development Commands
 - Python 3.9+; install with `pip install -e .[dev]` to get tests and linting tools.
-- Generate ICs: `swift-spiral-ics --out-ics demo.hdf5 --out-params demo.yml --n-galaxies 1 ...`.
+- Generate ICs: `swift-spiral-ics examples/mw_m31_merger.yml` or another generator YAML config.
 - Visualize: `swift-spiral-ics-viz demo.hdf5 --out-pdf diagnostics.pdf`; Movies: `swift-spiral-movie "snapshot_*.hdf5" --out-movie run.mp4`.
 - Inspect options with `swift-spiral-ics --help`; prefer small box sizes in local smoke tests to keep runs fast.
 
 ## Coding Style & Naming Conventions
 - Follow PEP 8 with 4-space indents; `ruff` enforces a 100-char line limit and import sorting (rule `I`).
 - Use snake_case for modules/functions, CapWords for classes, and explicit units in docstrings/argument names.
-- Keep randomness controlled via helpers in `utils/random.py`; pass seeds through CLI where feasible.
+- Keep randomness controlled via helpers in `utils/random.py`; pass seeds through generator YAML configs where feasible.
 - Run `ruff check src tests` before committing; fix warnings or justify ignores locally.
 
 ## Testing Guidelines
