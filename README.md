@@ -31,64 +31,13 @@ pip install -e .
 
 ## Quick Start
 
-### Generate a single spiral galaxy
+### Generate The MW-Andromeda Example
 
 ```bash
-swift-spiral-ics \
-  --out-ics galaxy_ic.hdf5 \
-  --out-params galaxy_params.yml \
-  --box-kpc 500 \
-  --n-galaxies 1 \
-  --dm-mass-msun 1e12 \
-  --dm-part-mass-msun 1e7 \
-  --star-mass-msun 6e10 \
-  --bulge-fraction 0.1666666667 \
-  --star-part-mass-msun 1.25e7 \
-  --gas-mass-msun 1e10 \
-  --gas-part-mass-msun 1e7 \
-  --c200 10 \
-  --max-timestep-gyr 0.8 \
-  --stellar-disk-scale-length-kpc 3.5 \
-  --stellar-disk-scale-height-kpc 0.35 \
-  --gas-disk-scale-length-kpc 7.0 \
-  --gas-disk-scale-height-kpc 0.1 \
-  --bulge-a-kpc 0.8 \
-  --n-arms 2 \
-  --pitch-deg 15 \
-  --arm-strength 0.25 \
-  --arm-stream-frac 0.1
+swift-spiral-ics examples/mw_m31_merger.yml
 ```
 
-### Generate a galaxy merger
-
-```bash
-swift-spiral-ics \
-  --out-ics merger_ic.hdf5 \
-  --out-params merger_params.yml \
-  --box-kpc 1000 \
-  --n-galaxies 2 \
-  --dm-mass-msun 1e12 4e11 \
-  --dm-part-mass-msun 1e7 \
-  --star-mass-msun 6e10 2e10 \
-  --bulge-fraction 0.1666666667 0.25 \
-  --star-part-mass-msun 1.25e7 \
-  --gas-mass-msun 1e10 3e9 \
-  --gas-part-mass-msun 1e7 \
-  --c200 10 8 \
-  --max-timestep-gyr 0.8 \
-  --stellar-disk-scale-length-kpc 3.5 2.5 \
-  --stellar-disk-scale-height-kpc 0.35 0.25 \
-  --gas-disk-scale-length-kpc 7.0 5.0 \
-  --gas-disk-scale-height-kpc 0.1 0.1 \
-  --bulge-a-kpc 0.8 0.6 \
-  --xs 400 600 \
-  --ys 500 500 \
-  --zs 500 500 \
-  --vxs 50 -50 \
-  --vys 0 0 \
-  --vzs 0 0 \
-  --inclination-deg 0 30
-```
+This writes `mw_m31_merger.hdf5` and `mw_m31_merger.yml` using a low-resolution parabolic encounter with baryonic particle masses of `1e6 Msun` and coarser `1e7 Msun` dark matter particles.
 
 ### Visualize initial conditions
 
@@ -104,50 +53,22 @@ swift-spiral-movie "snapshot_*.hdf5" --out-movie evolution.mp4 --fps 15
 
 ## Generator Interface
 
-The main generator is `swift-spiral-ics`.
+The main generator is `swift-spiral-ics CONFIG.yml`.
 
-The current interface is based on three ideas:
-
-- masses are specified by component
-- particle masses are specified by component
-- positions, velocities, and many structural parameters can be specified per galaxy
-
-For any per-galaxy argument, provide either:
-
-- one value: reuse it for every galaxy
-- `N` values: one value for each of `--n-galaxies N`
+All model choices live in a YAML file so each setup is reproducible and easy to re-run. The first complete example is `examples/mw_m31_merger.yml`.
 
 ### Required Inputs
 
-For a useful run you should normally set:
-
-- `--n-galaxies`
-- `--dm-mass-msun`
-- `--dm-part-mass-msun`
-- `--star-mass-msun`
-- `--star-part-mass-msun`
-- `--gas-mass-msun`
-- `--gas-part-mass-msun`
-
-For `--n-galaxies > 1`, you should also set:
-
-- `--xs`
-- `--ys`
-- `--zs`
-
-If you do not provide positions:
-
-- one galaxy is placed at the box centre with zero bulk velocity
-- multiple galaxies raise an error
+For a useful run you should normally set `output`, `simulation`, `particle_masses`, and `galaxies`. For multi-galaxy manual placement, set `galaxies[].placement.position_kpc`; for automatic encounters, set `orbit.type: parabolic`.
 
 Everything else has defaults.
 
 ### Mass Model
 
-- `--dm-mass-msun`: dark matter halo mass for each galaxy
-- `--star-mass-msun`: total stellar mass for each galaxy, including both bulge and stellar disc
-- `--gas-mass-msun`: total gas disc mass for each galaxy
-- `--bulge-fraction`: stellar bulge fraction defined as `B / (D + B)`
+- `galaxies[].masses.dm_msun`: dark matter halo mass for each galaxy
+- `galaxies[].masses.stars_msun`: total stellar mass for each galaxy, including both bulge and stellar disc
+- `galaxies[].masses.gas_msun`: total gas disc mass for each galaxy
+- `galaxies[].masses.bulge_fraction`: stellar bulge fraction defined as `B / (D + B)`
 
 The stellar mass split is:
 
@@ -158,9 +79,9 @@ The stellar mass split is:
 
 These are global per component, not per galaxy:
 
-- `--dm-part-mass-msun`: dark matter particle mass
-- `--star-part-mass-msun`: stellar particle mass
-- `--gas-part-mass-msun`: gas particle mass
+- `particle_masses.dm_msun`: dark matter particle mass
+- `particle_masses.stars_msun`: stellar particle mass
+- `particle_masses.gas_msun`: gas particle mass
 
 Particle counts are derived internally by rounding component mass divided by component particle mass.
 
@@ -168,109 +89,86 @@ Bulge particles use `--star-part-mass-msun` because the bulge is stellar.
 
 ### Halo Parameters
 
-- `--c200`: NFW concentration for each galaxy
+- `galaxies[].halo.c200`: NFW concentration for each galaxy
 
 Dark matter is not disk-based. It is always treated as an NFW halo.
 
 ### Stellar Structure
 
-- `--stellar-disk-scale-length-kpc`: stellar disk scale length
-- `--stellar-disk-scale-height-kpc`: stellar disk scale height
-- `--Q-star`: stellar Toomre `Q`
+- `galaxies[].stellar_disk.scale_length_kpc`: stellar disk scale length
+- `galaxies[].stellar_disk.scale_height_kpc`: stellar disk scale height
+- `galaxies[].stellar_disk.Q`: stellar Toomre `Q`
 
 ### Gas Structure
 
-- `--gas-disk-scale-length-kpc`: gas disk scale length
-- `--gas-disk-scale-height-kpc`: gas disk scale height
-- `--Q-gas`: gas Toomre `Q`
+- `galaxies[].gas_disk.scale_length_kpc`: gas disk scale length
+- `galaxies[].gas_disk.scale_height_kpc`: gas disk scale height
+- `galaxies[].gas_disk.Q`: gas Toomre `Q`
 
 ### Bulge Structure
 
-- `--bulge-a-kpc`: Hernquist bulge scale radius
-- `--bulge-rmax-scale`: bulge truncation radius in units of `a`
+- `galaxies[].bulge.a_kpc`: Hernquist bulge scale radius
+- `galaxies[].bulge.rmax_scale`: bulge truncation radius in units of `a`
 
 ### Multi-Galaxy Placement
 
-Positions are literal box coordinates in kpc and must lie between `0` and `--box-kpc`:
+Positions are literal box coordinates in kpc and must lie between `0` and `simulation.box_kpc`:
 
-- `--xs`
-- `--ys`
-- `--zs`
+- `galaxies[].placement.position_kpc`
 
 Bulk velocities are given in km/s:
 
-- `--vxs`
-- `--vys`
-- `--vzs`
+- `galaxies[].placement.velocity_kms`
 
 Disk orientations are given by:
 
-- `--inclination-deg`
+- `galaxies[].placement.inclination_deg`
 
-If an axis is omitted while positions are otherwise provided, that axis defaults to the box centre for every galaxy.
+`position_kpc` and `velocity_kms` are three-element vectors. If no velocity is provided, the galaxy receives zero bulk velocity.
 
 Alternatively, for two-galaxy encounters, the generator can compute a parabolic orbit in the centre-of-mass frame:
 
-- `--orbit parabolic`
-- `--orbit-r-init-kpc`: initial galaxy-centre separation
-- `--orbit-r-peri-kpc`: target parabolic pericentre distance
-- `--orbit-plane-angle-deg`: optional orbit-plane rotation around the y-axis
+- `orbit.type: parabolic`
+- `orbit.r_init_kpc`: initial galaxy-centre separation
+- `orbit.r_peri_kpc`: target parabolic pericentre distance
+- `orbit.plane_angle_deg`: optional orbit-plane rotation around the y-axis
 
-When using `--orbit parabolic`, do not also provide `--xs`, `--ys`, `--zs`, `--vxs`, `--vys`, or `--vzs`; those COM positions and velocities are computed from the galaxy masses.
-
-Example:
-
-```bash
-swift-spiral-ics \
-  --out-ics mw_m31_parabolic.hdf5 \
-  --out-params mw_m31_parabolic.yml \
-  --box-kpc 2000 \
-  --n-galaxies 2 \
-  --orbit parabolic \
-  --orbit-r-init-kpc 600 \
-  --orbit-r-peri-kpc 75 \
-  --dm-mass-msun 1.0e12 1.5e12 \
-  --dm-part-mass-msun 1e7 \
-  --star-mass-msun 6.0e10 1.0e11 \
-  --star-part-mass-msun 1e6 \
-  --gas-mass-msun 1.0e10 7.0e9 \
-  --gas-part-mass-msun 1e6
-```
+When using `orbit.type: parabolic`, do not also provide manual positions or velocities; those COM positions and velocities are computed from the galaxy masses.
 
 ### Spiral Structure
 
-- `--n-arms`: number of spiral arms
-- `--pitch-deg`: spiral pitch angle
-- `--arm-strength`: spiral perturbation strength
-- `--arm-stream-frac`: streaming fraction applied in the spiral perturbation
+- `galaxies[].spiral.n_arms`: number of spiral arms
+- `galaxies[].spiral.pitch_deg`: spiral pitch angle
+- `galaxies[].spiral.strength`: spiral perturbation strength
+- `galaxies[].spiral.stream_frac`: streaming fraction applied in the spiral perturbation
 
 ### Bar Structure
 
-- `--bar-enabled`: turn on the bar model
-- `--bar-strength`: bar strength
-- `--bar-radius`: bar radius
-- `--bar-q`: bar flattening
-- `--bar-angle`: bar angle in degrees
+- `galaxies[].bar.enabled`: turn on the bar model
+- `galaxies[].bar.strength`: bar strength
+- `galaxies[].bar.radius_kpc`: bar radius
+- `galaxies[].bar.q`: bar flattening
+- `galaxies[].bar.angle_deg`: bar angle in degrees
 
 ### Time Integration And Outputs
 
-- `--max-timestep-gyr`: maximum SWIFT timestep written to the YAML
-- `--dt-min-gyr`: minimum SWIFT timestep written to the YAML
-- `--time-end-gyr`: total simulation duration
-- `--snapshot-dt-myr`: snapshot cadence
+- `simulation.max_timestep_gyr`: maximum SWIFT timestep written to the YAML
+- `simulation.dt_min_gyr`: minimum physical timestep written to the YAML
+- `simulation.time_end_gyr`: total simulation duration
+- `simulation.snapshot_dt_myr`: snapshot cadence
 
 ### Grid Solver Controls
 
-- `--nR-grid`: radial grid resolution for the C++ solver
-- `--nz-grid`: vertical grid resolution for the C++ solver
-- `--eps-grid`: solver softening length in kpc
-- `--h-max-cell-fraction`: set `h_max` as a fraction of the SWIFT top-level cell width
-- `--max-top-level-cells`: set `Scheduler.max_top_level_cells` in the generated SWIFT YAML
-- `--scheduler-tasks-per-cell`: set `Scheduler.tasks_per_cell` in the generated SWIFT YAML
+- `grid.nR`: radial grid resolution for the C++ solver
+- `grid.nz`: vertical grid resolution for the C++ solver
+- `grid.eps_kpc`: solver softening length in kpc
+- `grid.h_max_cell_fraction`: set `h_max` as a fraction of the SWIFT top-level cell width
+- `grid.max_top_level_cells`: set `Scheduler.max_top_level_cells` in the generated SWIFT YAML
+- `grid.scheduler_tasks_per_cell`: set `Scheduler.tasks_per_cell` in the generated SWIFT YAML
 
 ### Feedback And Runtime Parameters
 
-- `--feedback-scale`: relative scaling of the EAGLE SNII feedback energy fractions
+- `simulation.feedback_scale`: relative scaling of the EAGLE SNII feedback energy fractions
 
 Examples:
 
@@ -280,85 +178,26 @@ Examples:
 
 ### Background Medium
 
-- `--bg-gas-density-msun-kpc3`: uniform background gas density
-- `--bg-dm-density-msun-kpc3`: uniform background dark matter density
-- `--bg-grid-kpc`: background particle spacing
-- `--bg-radius-kpc`: optional spherical cutoff radius for background particles around the central galaxy
+- `background.gas_density_msun_kpc3`: uniform background gas density
+- `background.dm_density_msun_kpc3`: uniform background dark matter density
+- `background.grid_kpc`: background particle spacing
+- `background.radius_kpc`: optional spherical cutoff radius for background particles around the central galaxy
 
 Background behavior:
 
-- `--bg-grid-kpc 0`: random uniform background
-- `--bg-grid-kpc > 0`: regular grid background with jitter
-- `--bg-radius-kpc R`: limit either background mode to a sphere of radius `R` rather than the full box
+- `background.grid_kpc: 0`: random uniform background
+- `background.grid_kpc > 0`: regular grid background with jitter
+- `background.radius_kpc: R`: limit either background mode to a sphere of radius `R` rather than the full box
 
 ### Output And Metadata
 
-- `--out-ics`: output IC HDF5 path
-- `--out-params`: output SWIFT YAML path
-- `--run-name`: run name written into the YAML
-- `--snapshot-basename`: snapshot basename written into the YAML
-- `--param-template`: parameter template name
-- `--seed`: random seed
-- `--box-kpc`: simulation box size
-
-## Argument Summary
-
-### Per-Galaxy Arguments
-
-- `--dm-mass-msun`
-- `--star-mass-msun`
-- `--gas-mass-msun`
-- `--bulge-fraction`
-- `--xs`, `--ys`, `--zs`
-- `--vxs`, `--vys`, `--vzs`
-- `--inclination-deg`
-- `--c200`
-- `--bulge-a-kpc`
-- `--bulge-rmax-scale`
-- `--stellar-disk-scale-length-kpc`
-- `--stellar-disk-scale-height-kpc`
-- `--gas-disk-scale-length-kpc`
-- `--gas-disk-scale-height-kpc`
-- `--Q-star`
-- `--Q-gas`
-- `--n-arms`
-- `--pitch-deg`
-- `--arm-strength`
-- `--arm-stream-frac`
-- `--bar-strength`
-- `--bar-radius`
-- `--bar-q`
-- `--bar-angle`
-
-### Global Scalar Arguments
-
-- `--dm-part-mass-msun`
-- `--star-part-mass-msun`
-- `--gas-part-mass-msun`
-- `--box-kpc`
-- `--orbit`
-- `--orbit-r-init-kpc`
-- `--orbit-r-peri-kpc`
-- `--orbit-plane-angle-deg`
-- `--max-timestep-gyr`
-- `--dt-min-gyr`
-- `--time-end-gyr`
-- `--snapshot-dt-myr`
-- `--feedback-scale`
-- `--nR-grid`
-- `--nz-grid`
-- `--eps-grid`
-- `--bg-gas-density-msun-kpc3`
-- `--bg-dm-density-msun-kpc3`
-- `--bg-grid-kpc`
-- `--seed`
-- `--n-galaxies`
-- `--bar-enabled`
-- `--out-ics`
-- `--out-params`
-- `--run-name`
-- `--snapshot-basename`
-- `--param-template`
+- `output.ics`: output IC HDF5 path
+- `output.params`: output SWIFT YAML path
+- `output.run_name`: run name written into the YAML
+- `output.snapshot_basename`: snapshot basename written into the YAML
+- `output.param_template`: parameter template name
+- `simulation.seed`: random seed
+- `simulation.box_kpc`: simulation box size
 
 ### Visualization (`swift-spiral-ics-viz`)
 
@@ -423,7 +262,7 @@ Includes complete SWIFT configuration with:
 After generating ICs:
 
 ```bash
-swift --hydro --self-gravity --stars --feedback --threads=16 galaxy_params.yml
+swift --hydro --self-gravity --stars --feedback --threads=16 mw_m31_merger.yml
 ```
 
 ## Testing
@@ -443,16 +282,9 @@ Tests cover:
 
 ## Examples
 
-See the runnable example scripts in `Runs/` for the current recommended usage patterns, including:
+Reusable generator configs live in `examples/`:
 
-- `Runs/cheap_cpp/run.sh`
-- `Runs/medres_cpp/run.sh`
-- `Runs/medres_movie/run.sh`
-- `Runs/medres_500myr/run.sh`
-- `Runs/cheap_1gyr_relax_merge/run.sh`
-- `Runs/hires_1gyr_relax_merge/run.sh`
-- `Runs/cosma_run/run.sh`
-- `Runs/test_run/run.sh`
+- `examples/mw_m31_merger.yml`: low-resolution Milky Way-Andromeda-like parabolic merger
 
 ## License
 

@@ -6,6 +6,7 @@ import argparse
 import sys
 
 import numpy as np
+import yaml
 
 from ..io.swift_writer import write_swift_ic
 from ..io.yaml_writer import generate_swift_params
@@ -726,317 +727,224 @@ def _jitter_duplicates(pos: np.ndarray, rng: np.random.Generator, id_str: str) -
     return pos
 
 
+def _set_if_present(args: argparse.Namespace, attr: str, section: dict, key: str) -> None:
+    if key in section:
+        setattr(args, attr, section[key])
+
+
+def _coerce_numeric_strings(value):
+    if isinstance(value, dict):
+        return {key: _coerce_numeric_strings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_coerce_numeric_strings(item) for item in value]
+    if isinstance(value, str):
+        try:
+            if value.strip().isdigit():
+                return int(value)
+            return float(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _collect_galaxy_values(galaxies: list[dict], path: tuple[str, ...]) -> list | None:
+    values = []
+    seen = False
+    for galaxy in galaxies:
+        section = galaxy
+        for key in path[:-1]:
+            section = section.get(key, {})
+        if path[-1] in section:
+            seen = True
+            values.append(section[path[-1]])
+        else:
+            values.append(None)
+
+    if not seen:
+        return None
+    if any(value is None for value in values):
+        dotted_path = ".".join(path)
+        raise ValueError(f"If galaxies specify {dotted_path}, every galaxy must specify it")
+    return values
+
+
+def _collect_galaxy_vectors(galaxies: list[dict], key: str) -> tuple[list, list, list] | None:
+    vectors = _collect_galaxy_values(galaxies, ("placement", key))
+    if vectors is None:
+        return None
+    for vector in vectors:
+        if len(vector) != 3:
+            raise ValueError(f"galaxies[].placement.{key} must have three values")
+    return ([vector[0] for vector in vectors], [vector[1] for vector in vectors], [vector[2] for vector in vectors])
+
+
+def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.Namespace:
+    with open(config_path) as handle:
+        config = _coerce_numeric_strings(yaml.safe_load(handle) or {})
+
+    if not isinstance(config, dict):
+        raise ValueError("Generator config must be a YAML mapping")
+
+    output = config.get("output", {})
+    _set_if_present(args, "out_ics", output, "ics")
+    _set_if_present(args, "out_params", output, "params")
+    _set_if_present(args, "run_name", output, "run_name")
+    _set_if_present(args, "snapshot_basename", output, "snapshot_basename")
+    _set_if_present(args, "param_template", output, "param_template")
+
+    simulation = config.get("simulation", {})
+    _set_if_present(args, "box_kpc", simulation, "box_kpc")
+    _set_if_present(args, "seed", simulation, "seed")
+    _set_if_present(args, "max_timestep_gyr", simulation, "max_timestep_gyr")
+    _set_if_present(args, "dt_min_gyr", simulation, "dt_min_gyr")
+    _set_if_present(args, "time_end_gyr", simulation, "time_end_gyr")
+    _set_if_present(args, "snapshot_dt_myr", simulation, "snapshot_dt_myr")
+    _set_if_present(args, "feedback_scale", simulation, "feedback_scale")
+
+    particle_masses = config.get("particle_masses", {})
+    _set_if_present(args, "dm_part_mass_msun", particle_masses, "dm_msun")
+    _set_if_present(args, "star_part_mass_msun", particle_masses, "stars_msun")
+    _set_if_present(args, "gas_part_mass_msun", particle_masses, "gas_msun")
+
+    orbit = config.get("orbit", {})
+    _set_if_present(args, "orbit", orbit, "type")
+    _set_if_present(args, "orbit_r_init_kpc", orbit, "r_init_kpc")
+    _set_if_present(args, "orbit_r_peri_kpc", orbit, "r_peri_kpc")
+    _set_if_present(args, "orbit_plane_angle_deg", orbit, "plane_angle_deg")
+
+    grid = config.get("grid", {})
+    _set_if_present(args, "nR_grid", grid, "nR")
+    _set_if_present(args, "nz_grid", grid, "nz")
+    _set_if_present(args, "eps_grid", grid, "eps_kpc")
+    _set_if_present(args, "h_max_cell_fraction", grid, "h_max_cell_fraction")
+    _set_if_present(args, "scheduler_tasks_per_cell", grid, "scheduler_tasks_per_cell")
+    _set_if_present(args, "max_top_level_cells", grid, "max_top_level_cells")
+
+    background = config.get("background", {})
+    _set_if_present(args, "bg_gas_density_msun_kpc3", background, "gas_density_msun_kpc3")
+    _set_if_present(args, "bg_dm_density_msun_kpc3", background, "dm_density_msun_kpc3")
+    _set_if_present(args, "bg_grid_kpc", background, "grid_kpc")
+    _set_if_present(args, "bg_radius_kpc", background, "radius_kpc")
+
+    galaxies = config.get("galaxies")
+    if galaxies is None:
+        return args
+    if not isinstance(galaxies, list) or len(galaxies) == 0:
+        raise ValueError("galaxies must be a non-empty YAML list")
+
+    args.n_galaxies = len(galaxies)
+    galaxy_mappings = {
+        "dm_mass_msun": ("masses", "dm_msun"),
+        "star_mass_msun": ("masses", "stars_msun"),
+        "gas_mass_msun": ("masses", "gas_msun"),
+        "bulge_fraction": ("masses", "bulge_fraction"),
+        "c200": ("halo", "c200"),
+        "bulge_a_kpc": ("bulge", "a_kpc"),
+        "bulge_rmax_scale": ("bulge", "rmax_scale"),
+        "stellar_disk_scale_length_kpc": ("stellar_disk", "scale_length_kpc"),
+        "stellar_disk_scale_height_kpc": ("stellar_disk", "scale_height_kpc"),
+        "Q_star": ("stellar_disk", "Q"),
+        "gas_disk_scale_length_kpc": ("gas_disk", "scale_length_kpc"),
+        "gas_disk_scale_height_kpc": ("gas_disk", "scale_height_kpc"),
+        "Q_gas": ("gas_disk", "Q"),
+        "n_arms": ("spiral", "n_arms"),
+        "pitch_deg": ("spiral", "pitch_deg"),
+        "arm_strength": ("spiral", "strength"),
+        "arm_stream_frac": ("spiral", "stream_frac"),
+        "bar_strength": ("bar", "strength"),
+        "bar_radius": ("bar", "radius_kpc"),
+        "bar_q": ("bar", "q"),
+        "bar_angle": ("bar", "angle_deg"),
+        "inclination_deg": ("placement", "inclination_deg"),
+    }
+    for attr, path in galaxy_mappings.items():
+        values = _collect_galaxy_values(galaxies, path)
+        if values is not None:
+            setattr(args, attr, values)
+
+    positions = _collect_galaxy_vectors(galaxies, "position_kpc")
+    if positions is not None:
+        args.xs, args.ys, args.zs = positions
+    velocities = _collect_galaxy_vectors(galaxies, "velocity_kms")
+    if velocities is not None:
+        args.vxs, args.vys, args.vzs = velocities
+
+    if any(galaxy.get("bar", {}).get("enabled", False) for galaxy in galaxies):
+        args.bar_enabled = True
+
+    return args
+
+
+def _default_generator_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        out_ics="galaxy_ic.hdf5",
+        out_params="galaxy_params.yml",
+        box_kpc=100.0,
+        dm_mass_msun=None,
+        dm_part_mass_msun=None,
+        bulge_fraction=None,
+        star_mass_msun=None,
+        star_part_mass_msun=None,
+        gas_mass_msun=None,
+        gas_part_mass_msun=None,
+        n_galaxies=1,
+        inclination_deg=None,
+        xs=None,
+        ys=None,
+        zs=None,
+        vxs=None,
+        vys=None,
+        vzs=None,
+        orbit="manual",
+        orbit_r_init_kpc=None,
+        orbit_r_peri_kpc=None,
+        orbit_plane_angle_deg=0.0,
+        c200=[10.0],
+        bulge_a_kpc=[0.8],
+        bulge_rmax_scale=[50.0],
+        stellar_disk_scale_length_kpc=[3.5],
+        stellar_disk_scale_height_kpc=[0.35],
+        Q_star=[1.5],
+        gas_disk_scale_length_kpc=[7.0],
+        gas_disk_scale_height_kpc=[0.1],
+        Q_gas=[1.0],
+        n_arms=[2],
+        pitch_deg=[15.0],
+        arm_strength=[0.3],
+        arm_stream_frac=[0.1],
+        bar_enabled=False,
+        bar_strength=[0.1],
+        bar_radius=[3.0],
+        bar_q=[0.3],
+        bar_angle=[0.0],
+        max_timestep_gyr=0.8,
+        dt_min_gyr=1e-5,
+        time_end_gyr=10.0,
+        snapshot_dt_myr=10.0,
+        feedback_scale=1.0,
+        nR_grid=256,
+        nz_grid=256,
+        eps_grid=0.1,
+        h_max_cell_fraction=0.5,
+        scheduler_tasks_per_cell=100,
+        max_top_level_cells=16,
+        bg_gas_density_msun_kpc3=0.0,
+        bg_dm_density_msun_kpc3=0.0,
+        bg_grid_kpc=0.0,
+        bg_radius_kpc=None,
+        seed=42,
+        run_name=None,
+        param_template="eagle_ref_cosmo",
+        snapshot_basename="snapshot",
+    )
+
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="SWIFT Initial Conditions Generator."
-    )
+    parser = argparse.ArgumentParser(description="Generate SWIFT ICs from a YAML config file.")
+    parser.add_argument("config", type=str, help="Generator YAML config file.")
 
-    # Output arguments
-    parser.add_argument(
-        "--out-ics", type=str, default="galaxy_ic.hdf5", help="Output ICs file name."
-    )
-    parser.add_argument(
-        "--out-params",
-        type=str,
-        default="galaxy_params.yml",
-        help="Output parameter file name.",
-    )
-
-    # General galaxy properties
-    parser.add_argument(
-        "--box-kpc", type=float, default=100.0, help="Simulation box size in kpc."
-    )
-    parser.add_argument(
-        "--dm-mass-msun",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Dark matter halo mass of each galaxy in M_sun.",
-    )
-    parser.add_argument(
-        "--dm-part-mass-msun",
-        type=float,
-        default=None,
-        help="Dark matter particle mass in M_sun.",
-    )
-    parser.add_argument(
-        "--bulge-fraction",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Bulge-to-total stellar mass fraction B / (D + B) for each galaxy.",
-    )
-    parser.add_argument(
-        "--star-mass-msun",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Stellar disc mass of each galaxy in M_sun.",
-    )
-    parser.add_argument(
-        "--star-part-mass-msun",
-        type=float,
-        default=None,
-        help="Stellar particle mass in M_sun.",
-    )
-    parser.add_argument(
-        "--gas-mass-msun",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Gas disc mass of each galaxy in M_sun.",
-    )
-    parser.add_argument(
-        "--gas-part-mass-msun",
-        type=float,
-        default=None,
-        help="Gas particle mass in M_sun.",
-    )
-    parser.add_argument(
-        "--n-galaxies", type=int, default=1, help="Number of galaxies to generate."
-    )
-    parser.add_argument(
-        "--inclination-deg",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy disc inclinations in degrees.",
-    )
-    parser.add_argument(
-        "--xs",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy x coordinates in the box in kpc.",
-    )
-    parser.add_argument(
-        "--ys",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy y coordinates in the box in kpc.",
-    )
-    parser.add_argument(
-        "--zs",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy z coordinates in the box in kpc.",
-    )
-    parser.add_argument(
-        "--vxs",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy bulk x velocities in km/s.",
-    )
-    parser.add_argument(
-        "--vys",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy bulk y velocities in km/s.",
-    )
-    parser.add_argument(
-        "--vzs",
-        nargs="+",
-        type=float,
-        default=None,
-        help="Per-galaxy bulk z velocities in km/s.",
-    )
-    parser.add_argument(
-        "--orbit",
-        choices=["manual", "parabolic"],
-        default="manual",
-        help="Galaxy COM orbit setup. 'manual' uses --xs/--ys/--zs and --vxs/--vys/--vzs.",
-    )
-    parser.add_argument(
-        "--orbit-r-init-kpc",
-        type=float,
-        default=None,
-        help="Initial galaxy-centre separation for --orbit parabolic in kpc.",
-    )
-    parser.add_argument(
-        "--orbit-r-peri-kpc",
-        type=float,
-        default=None,
-        help="Target parabolic pericentre distance for --orbit parabolic in kpc.",
-    )
-    parser.add_argument(
-        "--orbit-plane-angle-deg",
-        type=float,
-        default=0.0,
-        help="Rotate the parabolic orbit plane around the y-axis by this angle in degrees.",
-    )
-
-    # Halo properties
-    parser.add_argument(
-        "--c200", nargs="+", type=float, default=[10.0], help="NFW concentration per galaxy."
-    )
-
-    # Bulge properties
-    parser.add_argument(
-        "--bulge-a-kpc", nargs="+", type=float, default=[0.8], help="Hernquist bulge scale length per galaxy in kpc."
-    )
-    parser.add_argument(
-        "--bulge-rmax-scale",
-        nargs="+",
-        type=float,
-        default=[50.0],
-        help="Truncate Hernquist bulge sampling at this many scale lengths per galaxy.",
-    )
-
-    # Stellar disc properties
-    parser.add_argument(
-        "--stellar-disk-scale-length-kpc",
-        nargs="+",
-        type=float,
-        default=[3.5],
-        help="Stellar disk scale length per galaxy in kpc.",
-    )
-    parser.add_argument(
-        "--stellar-disk-scale-height-kpc",
-        nargs="+",
-        type=float,
-        default=[0.35],
-        help="Stellar disk scale height per galaxy in kpc.",
-    )
-    parser.add_argument(
-        "--Q-star", nargs="+", type=float, default=[1.5], help="Stellar-disc Toomre Q per galaxy."
-    )
-
-    # Gas disc properties
-    parser.add_argument(
-        "--gas-disk-scale-length-kpc",
-        nargs="+",
-        type=float,
-        default=[7.0],
-        help="Gas disk scale length per galaxy in kpc.",
-    )
-    parser.add_argument(
-        "--gas-disk-scale-height-kpc",
-        nargs="+",
-        type=float,
-        default=[0.1],
-        help="Gas disk scale height per galaxy in kpc.",
-    )
-    parser.add_argument(
-        "--Q-gas", nargs="+", type=float, default=[1.0], help="Gas-disc Toomre Q per galaxy."
-    )
-
-    # Spiral arm properties
-    parser.add_argument(
-        "--n-arms", nargs="+", type=int, default=[2], help="Number of spiral arms per galaxy."
-    )
-    parser.add_argument(
-        "--pitch-deg", nargs="+", type=float, default=[15.0], help="Spiral-arm pitch angle per galaxy in degrees."
-    )
-    parser.add_argument(
-        "--arm-strength", nargs="+", type=float, default=[0.3], help="Spiral-arm strength per galaxy (0-1)."
-    )
-    parser.add_argument(
-        "--arm-stream-frac", nargs="+", type=float, default=[0.1], help="Spiral-arm streaming fraction per galaxy."
-    )
-
-    # Bar properties
-    parser.add_argument(
-        "--bar-enabled", action="store_true", help="Enable a galactic bar."
-    )
-    parser.add_argument(
-        "--bar-strength", nargs="+", type=float, default=[0.1], help="Bar strength per galaxy."
-    )
-    parser.add_argument(
-        "--bar-radius", nargs="+", type=float, default=[3.0], help="Bar radius per galaxy in kpc."
-    )
-    parser.add_argument(
-        "--bar-q", nargs="+", type=float, default=[0.3], help="Bar flattening q per galaxy."
-    )
-    parser.add_argument(
-        "--bar-angle", nargs="+", type=float, default=[0.0], help="Bar angle per galaxy in degrees."
-    )
-
-    # Simulation properties
-    parser.add_argument(
-        "--max-timestep-gyr", type=float, default=0.8, help="Maximum simulation time-step in Gyr."
-    )
-    parser.add_argument(
-        "--dt-min-gyr", type=float, default=1e-5, help="Minimum physical time-step in Gyr."
-    )
-    parser.add_argument(
-        "--time-end-gyr", type=float, default=10.0, help="Total simulation time in Gyr."
-    )
-    parser.add_argument(
-        "--snapshot-dt-myr", type=float, default=10.0, help="Snapshot output interval in Myr."
-    )
-    parser.add_argument(
-        "--feedback-scale",
-        type=float,
-        default=1.0,
-        help="Relative SNII feedback-energy scaling applied to the EAGLE feedback fractions.",
-    )
-
-    # Grid solver properties
-    parser.add_argument(
-        "--nR-grid", type=int, default=256, help="Number of radial grid cells for potential solver."
-    )
-    parser.add_argument(
-        "--nz-grid", type=int, default=256, help="Number of vertical grid cells for potential solver."
-    )
-    parser.add_argument(
-        "--eps-grid", type=float, default=0.1, help="Softening length for grid potential solver in kpc."
-    )
-    parser.add_argument(
-        "--h-max-cell-fraction",
-        type=float,
-        default=0.5,
-        help="Set h_max to this fraction of the top-level cell width in the generated SWIFT YAML.",
-    )
-    parser.add_argument(
-        "--scheduler-tasks-per-cell",
-        type=int,
-        default=100,
-        help="Set Scheduler.tasks_per_cell in the generated SWIFT YAML.",
-    )
-    parser.add_argument(
-        "--max-top-level-cells",
-        type=int,
-        default=16,
-        help="Set Scheduler.max_top_level_cells in the generated SWIFT YAML and derive h_max from that cell width.",
-    )
-
-    # Background properties
-    parser.add_argument(
-        "--bg-gas-density-msun-kpc3", type=float, default=0.0, help="Uniform background gas density (Msun/kpc^3)."
-    )
-    parser.add_argument(
-        "--bg-dm-density-msun-kpc3", type=float, default=0.0, help="Uniform background DM density (Msun/kpc^3)."
-    )
-    parser.add_argument(
-        "--bg-grid-kpc", type=float, default=0.0, help="Grid spacing for background particles (0 for random)."
-    )
-    parser.add_argument(
-        "--bg-radius-kpc",
-        type=float,
-        default=None,
-        help="Optional spherical cutoff radius for background particles around the central galaxy in kpc.",
-    )
-
-    # Misc
-    parser.add_argument(
-        "--seed", type=int, default=42, help="Random seed for reproducibility."
-    )
-    parser.add_argument(
-        "--run-name", type=str, default=None, help="Name for the SWIFT run (used in param file)."
-    )
-    parser.add_argument(
-        "--param-template", type=str, default="eagle_ref_cosmo", help="Name of the parameter file template."
-    )
-    parser.add_argument(
-        "--snapshot-basename", type=str, default="snapshot", help="Basename for SWIFT snapshots."
-    )
-
-
-    args = parser.parse_args()
+    cli_args = parser.parse_args()
+    args = _apply_config_file(_default_generator_args(), cli_args.config)
     _normalise_per_galaxy_args(args)
     galaxy_offsets, galaxy_bulk_velocities = _resolve_galaxy_placement(args)
 

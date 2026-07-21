@@ -49,6 +49,8 @@ htmlcov/
 *.h5
 *.yml
 *.yaml
+!examples/*.yml
+!examples/*.yaml
 *.pdf
 *.png
 *.mp4

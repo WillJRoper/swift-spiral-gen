@@ -1,0 +1,145 @@
+# Low-resolution Milky Way-Andromeda-like merger test.
+#
+# Run with:
+#   swift-spiral-ics examples/mw_m31_merger.yml
+#
+# This file is intended as a readable starting point rather than a definitive
+# Local Group model. The mass model is deliberately simple and the initial
+# separation is shorter than the present-day MW-M31 distance so test runs reach
+# interaction sooner. All lengths are in kpc, velocities in km/s, masses in Msun,
+# and times in Gyr or Myr as indicated by the key names.
+
+output:
+  # Initial-condition HDF5 file and SWIFT parameter YAML written by the generator.
+  ics: mw_m31_merger.hdf5
+  params: mw_m31_merger.yml
+  run_name: mw_m31_merger
+  snapshot_basename: snapshot
+
+simulation:
+  # Large enough to hold a 600 kpc binary plus extended NFW halos without wrapping.
+  box_kpc: 2000
+
+  # Reproducible stochastic particle sampling.
+  seed: 42
+
+  # Conservative timestepping for the early test problem. Increase only after
+  # checking the generated YAML and short SWIFT smoke tests.
+  max_timestep_gyr: 0.0005
+  dt_min_gyr: 1.0e-6
+
+  # Five Gyr is long enough for this shortened-separation setup to evolve through
+  # the main interaction in typical trial runs.
+  time_end_gyr: 5.0
+  snapshot_dt_myr: 10.0
+  feedback_scale: 1.0
+
+particle_masses:
+  # Keep the baryonic particle masses near 10^6 Msun for first tests.
+  # DM is coarser to avoid multi-million-particle halo-only debug runs. Setting
+  # dm_msun to 1.0e6 would produce roughly 2.5 million DM particles for the two
+  # halos alone.
+  dm_msun: 1.0e7
+  stars_msun: 1.0e6
+  gas_msun: 1.0e6
+
+orbit:
+  # Parabolic means zero two-body orbital energy for the total galaxy masses.
+  # The generator places both galaxy centres in the centre-of-mass frame.
+  type: parabolic
+
+  # Initial centre-to-centre separation. Present-day MW-M31 is about 780 kpc;
+  # 600 kpc is a practical lower-resolution test compromise.
+  r_init_kpc: 600
+
+  # Approximate target pericentre. Larger values make a more grazing encounter;
+  # smaller values are closer to head-on.
+  r_peri_kpc: 75
+
+  # Rotate the orbital plane around the y-axis. Keep zero for an x-y orbit plane.
+  plane_angle_deg: 0
+
+grid:
+  # Potential/kinematic grid resolution used during IC generation. These values
+  # are moderate; increase for production once the setup is behaving sensibly.
+  nR: 128
+  nz: 128
+
+  # Also used as the gravity softening length written into the SWIFT YAML.
+  eps_kpc: 0.8
+
+  # Scheduler/domain controls in the generated SWIFT YAML.
+  h_max_cell_fraction: 0.5
+  scheduler_tasks_per_cell: 100
+  max_top_level_cells: 16
+
+background:
+  # Optional uniform background medium. Disabled here to keep the first merger
+  # test focused on the two galaxies and to minimize particle count.
+  gas_density_msun_kpc3: 0.0
+  dm_density_msun_kpc3: 0.0
+  grid_kpc: 0.0
+
+galaxies:
+  - name: Milky Way
+    masses:
+      # Halo mass is the NFW M200. Stellar mass is total stars before splitting
+      # into disc and bulge via bulge_fraction.
+      dm_msun: 1.0e12
+      stars_msun: 6.0e10
+      gas_msun: 1.0e10
+      bulge_fraction: 0.1666666667
+    halo:
+      c200: 10
+    bulge:
+      a_kpc: 0.8
+      rmax_scale: 50
+    stellar_disk:
+      # Exponential stellar disc scale length/height and target Toomre Q.
+      scale_length_kpc: 3.5
+      scale_height_kpc: 0.35
+      Q: 2.0
+    gas_disk:
+      # Gas disc is more extended and thinner than the stellar disc.
+      scale_length_kpc: 7.0
+      scale_height_kpc: 0.1
+      Q: 1.5
+    spiral:
+      # Mild spiral perturbation. Keep stream_frac small for a stable initial test.
+      n_arms: 2
+      pitch_deg: 15
+      strength: 0.15
+      stream_frac: 0.02
+    placement:
+      # With orbit.type: parabolic, placement only controls disc orientation;
+      # positions and bulk velocities are computed from the orbit block.
+      inclination_deg: 0
+
+  - name: Andromeda
+    masses:
+      # M31 is modeled as the more massive, more bulge-dominated galaxy.
+      dm_msun: 1.5e12
+      stars_msun: 1.0e11
+      gas_msun: 7.0e9
+      bulge_fraction: 0.30
+    halo:
+      c200: 10
+    bulge:
+      a_kpc: 1.2
+      rmax_scale: 50
+    stellar_disk:
+      scale_length_kpc: 5.0
+      scale_height_kpc: 0.5
+      Q: 2.0
+    gas_disk:
+      scale_length_kpc: 10.0
+      scale_height_kpc: 0.15
+      Q: 1.5
+    spiral:
+      n_arms: 2
+      pitch_deg: 15
+      strength: 0.15
+      stream_frac: 0.02
+    placement:
+      # Tilt M31 relative to the MW disc to avoid a purely coplanar encounter.
+      inclination_deg: 60

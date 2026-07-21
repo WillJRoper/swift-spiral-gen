@@ -1,6 +1,5 @@
 """Integration tests for full IC generation pipeline."""
 
-import argparse
 import subprocess
 import sys
 import tempfile
@@ -8,8 +7,11 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import yaml
 
 from swift_spiral_ics.cli.generate import (
+    _apply_config_file,
+    _default_generator_args,
     _normalise_per_galaxy_args,
     _resolve_galaxy_placement,
 )
@@ -21,210 +23,134 @@ from swift_spiral_ics.physics.sampling import (
 from swift_spiral_ics.utils.random import get_rng
 
 
+def _tiny_galaxy_config(ic_file: Path, params_file: Path) -> dict:
+    return {
+        "output": {"ics": str(ic_file), "params": str(params_file)},
+        "simulation": {
+            "box_kpc": 100,
+            "seed": 42,
+            "time_end_gyr": 0.01,
+            "snapshot_dt_myr": 5,
+        },
+        "particle_masses": {"dm_msun": 1e9, "stars_msun": 1e8, "gas_msun": 1e8},
+        "grid": {"nR": 16, "nz": 16, "eps_kpc": 0.5},
+        "galaxies": [
+            {
+                "masses": {
+                    "dm_msun": 1e9,
+                    "stars_msun": 1e8,
+                    "gas_msun": 1e8,
+                    "bulge_fraction": 0.0,
+                },
+                "halo": {"c200": 10},
+                "bulge": {"a_kpc": 0.5},
+                "stellar_disk": {"scale_length_kpc": 1.0, "scale_height_kpc": 0.1},
+                "gas_disk": {"scale_length_kpc": 1.0, "scale_height_kpc": 0.1},
+            }
+        ],
+    }
+
+
+def _run_generator(config: dict, tmpdir: str) -> subprocess.CompletedProcess:
+    config_file = Path(tmpdir) / "generator.yml"
+    with open(config_file, "w") as handle:
+        yaml.safe_dump(config, handle)
+    return subprocess.run(
+        [sys.executable, "-m", "swift_spiral_ics.cli.generate", str(config_file)],
+        capture_output=True,
+        text=True,
+    )
+
+
 class TestFullPipeline:
     """Test complete IC generation pipeline."""
 
-    def test_parabolic_orbit_placement_is_com_balanced(self):
-        """Parabolic orbit mode computes two COM-balanced galaxy centres."""
-        args = argparse.Namespace(
-            n_galaxies=2,
-            box_kpc=200.0,
-            dm_mass_msun=[1.0e12, 2.0e12],
-            star_mass_msun=[6.0e10, 1.0e11],
-            gas_mass_msun=[1.0e10, 2.0e10],
-            bulge_fraction=[0.2, 0.3],
-            dm_part_mass_msun=1.0e9,
-            star_part_mass_msun=1.0e8,
-            gas_part_mass_msun=1.0e8,
-            c200=[10.0, 10.0],
-            bulge_a_kpc=[0.8, 1.0],
-            bulge_rmax_scale=[50.0],
-            stellar_disk_scale_length_kpc=[3.5, 5.0],
-            stellar_disk_scale_height_kpc=[0.35, 0.5],
-            Q_star=[2.0],
-            gas_disk_scale_length_kpc=[7.0, 10.0],
-            gas_disk_scale_height_kpc=[0.1, 0.15],
-            Q_gas=[1.5],
-            n_arms=[2],
-            pitch_deg=[15.0],
-            arm_strength=[0.15],
-            arm_stream_frac=[0.02],
-            bar_strength=[0.1],
-            bar_radius=[3.0],
-            bar_q=[0.3],
-            bar_angle=[0.0],
-            inclination_deg=None,
-            xs=None,
-            ys=None,
-            zs=None,
-            vxs=None,
-            vys=None,
-            vzs=None,
-            orbit="parabolic",
-            orbit_r_init_kpc=80.0,
-            orbit_r_peri_kpc=10.0,
-            orbit_plane_angle_deg=0.0,
-        )
+    def test_yaml_config_maps_to_com_balanced_parabolic_placement(self):
+        """Parabolic orbit configs compute two COM-balanced galaxy centres."""
+        config = {
+            "simulation": {"box_kpc": 200.0},
+            "particle_masses": {"dm_msun": 1e9, "stars_msun": 1e8, "gas_msun": 1e8},
+            "orbit": {"type": "parabolic", "r_init_kpc": 80.0, "r_peri_kpc": 10.0},
+            "galaxies": [
+                {
+                    "masses": {
+                        "dm_msun": 1.0e12,
+                        "stars_msun": 6.0e10,
+                        "gas_msun": 1.0e10,
+                        "bulge_fraction": 0.2,
+                    },
+                    "halo": {"c200": 10.0},
+                    "bulge": {"a_kpc": 0.8},
+                    "stellar_disk": {"scale_length_kpc": 3.5, "scale_height_kpc": 0.35, "Q": 2.0},
+                    "gas_disk": {"scale_length_kpc": 7.0, "scale_height_kpc": 0.1, "Q": 1.5},
+                },
+                {
+                    "masses": {
+                        "dm_msun": 2.0e12,
+                        "stars_msun": 1.0e11,
+                        "gas_msun": 2.0e10,
+                        "bulge_fraction": 0.3,
+                    },
+                    "halo": {"c200": 10.0},
+                    "bulge": {"a_kpc": 1.0},
+                    "stellar_disk": {"scale_length_kpc": 5.0, "scale_height_kpc": 0.5, "Q": 2.0},
+                    "gas_disk": {"scale_length_kpc": 10.0, "scale_height_kpc": 0.15, "Q": 1.5},
+                },
+            ],
+        }
 
-        _normalise_per_galaxy_args(args)
-        positions, velocities = _resolve_galaxy_placement(args)
-        masses = np.asarray([
-            args.m200_msun[i] + args.m_star_msun[i] + args.m_bulge_msun[i] + args.m_gas_msun[i]
-            for i in range(args.n_galaxies)
-        ])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "generator.yml"
+            with open(config_file, "w") as handle:
+                yaml.safe_dump(config, handle)
+
+            args = _apply_config_file(_default_generator_args(), str(config_file))
+            _normalise_per_galaxy_args(args)
+            positions, velocities = _resolve_galaxy_placement(args)
+            masses = np.asarray([
+                args.m200_msun[i]
+                + args.m_star_msun[i]
+                + args.m_bulge_msun[i]
+                + args.m_gas_msun[i]
+                for i in range(args.n_galaxies)
+            ])
 
         assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 80.0)
         assert np.allclose(np.average(positions, axis=0, weights=masses), 0.0)
         assert np.allclose(np.average(velocities, axis=0, weights=masses), 0.0)
         assert velocities[1, 0] < velocities[0, 0]
 
-    def test_generate_tiny_galaxy(self):
-        """Test generating a tiny galaxy (fast smoke test)."""
+    def test_generate_tiny_galaxy_from_yaml(self):
+        """Test generating a tiny galaxy from a YAML config."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
-            yaml_file = Path(tmpdir) / "test_params.yml"
+            params_file = Path(tmpdir) / "test_params.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
 
-            # Run CLI with minimal parameters
-            cmd = [
-                "python",
-                "-m",
-                "swift_spiral_ics.cli.generate",
-                "--out-ics",
-                str(ic_file),
-                "--out-params",
-                str(yaml_file),
-                "--seed",
-                "42",
-                "--box-kpc",
-                "100",
-                "--n-galaxies",
-                "1",
-                "--dm-mass-msun",
-                "1.1e11",
-                "--dm-part-mass-msun",
-                "1e9",
-                "--star-mass-msun",
-                "7e9",
-                "--bulge-fraction",
-                "0.1428571429",
-                "--star-part-mass-msun",
-                "1e8",
-                "--gas-mass-msun",
-                "2e9",
-                "--gas-part-mass-msun",
-                "5e7",
-                "--c200",
-                "10",
-                "--max-timestep-gyr",
-                "0.8",
-                "--stellar-disk-scale-length-kpc",
-                "3",
-                "--stellar-disk-scale-height-kpc",
-                "0.3",
-                "--gas-disk-scale-length-kpc",
-                "5",
-                "--gas-disk-scale-height-kpc",
-                "0.1",
-                "--bulge-a-kpc",
-                "1",
-                "--time-end-gyr",
-                "1.0",
-                "--snapshot-dt-myr",
-                "50",
-            ]
+            result = _run_generator(config, tmpdir)
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
-
-            # Check that files were created
             assert ic_file.exists(), (
                 f"IC file not created. Stdout: {result.stdout}, Stderr: {result.stderr}"
             )
-            assert yaml_file.exists()
-
-            # Validate IC file structure
+            assert params_file.exists()
             with h5py.File(ic_file, "r") as f:
                 assert "Header" in f
                 assert "Units" in f
                 assert "PartType0" in f or "PartType1" in f or "PartType4" in f
 
     def test_multi_galaxy_positions_are_literal_box_coordinates(self):
-        """Per-galaxy positions are interpreted as literal coordinates in the box."""
+        """Per-galaxy YAML positions are interpreted as literal coordinates in the box."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
-            yaml_file = Path(tmpdir) / "test_params.yml"
-
-            cmd = [
-                sys.executable,
-                "-m",
-                "swift_spiral_ics.cli.generate",
-                "--out-ics",
-                str(ic_file),
-                "--out-params",
-                str(yaml_file),
-                "--seed",
-                "42",
-                "--box-kpc",
-                "100",
-                "--n-galaxies",
-                "2",
-                "--xs",
-                "10",
-                "90",
-                "--ys",
-                "50",
-                "50",
-                "--zs",
-                "50",
-                "50",
-                "--dm-mass-msun",
-                "1e9",
-                "1e9",
-                "--dm-part-mass-msun",
-                "1e9",
-                "--star-mass-msun",
-                "1e8",
-                "1e8",
-                "--bulge-fraction",
-                "0.0",
-                "0.0",
-                "--star-part-mass-msun",
-                "1e8",
-                "--gas-mass-msun",
-                "1e8",
-                "1e8",
-                "--gas-part-mass-msun",
-                "1e8",
-                "--c200",
-                "10",
-                "10",
-                "--stellar-disk-scale-length-kpc",
-                "1.0",
-                "1.0",
-                "--stellar-disk-scale-height-kpc",
-                "0.1",
-                "0.1",
-                "--gas-disk-scale-length-kpc",
-                "1.0",
-                "1.0",
-                "--gas-disk-scale-height-kpc",
-                "0.1",
-                "0.1",
-                "--bulge-a-kpc",
-                "0.5",
-                "0.5",
-                "--nR-grid",
-                "16",
-                "--nz-grid",
-                "16",
-                "--eps-grid",
-                "0.5",
-                "--time-end-gyr",
-                "0.01",
-                "--snapshot-dt-myr",
-                "5",
+            params_file = Path(tmpdir) / "test_params.yml"
+            galaxy = _tiny_galaxy_config(ic_file, params_file)["galaxies"][0]
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["galaxies"] = [
+                {**galaxy, "placement": {"position_kpc": [10, 50, 50]}},
+                {**galaxy, "placement": {"position_kpc": [90, 50, 50]}},
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = _run_generator(config, tmpdir)
 
             assert result.returncode == 0, result.stderr
             with h5py.File(ic_file, "r") as f:
@@ -232,118 +158,62 @@ class TestFullPipeline:
                 assert dm_x_kpc.min() < 20.0
                 assert dm_x_kpc.max() > 80.0
 
-    def test_generate_tiny_parabolic_merger(self):
-        """The CLI can generate a two-galaxy parabolic merger without manual COM inputs."""
+    def test_generate_tiny_parabolic_merger_from_yaml(self):
+        """The CLI can generate a two-galaxy parabolic merger from YAML."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
-            yaml_file = Path(tmpdir) / "test_params.yml"
-
-            cmd = [
-                sys.executable,
-                "-m",
-                "swift_spiral_ics.cli.generate",
-                "--out-ics",
-                str(ic_file),
-                "--out-params",
-                str(yaml_file),
-                "--seed",
-                "42",
-                "--box-kpc",
-                "200",
-                "--n-galaxies",
-                "2",
-                "--orbit",
-                "parabolic",
-                "--orbit-r-init-kpc",
-                "40",
-                "--orbit-r-peri-kpc",
-                "5",
-                "--dm-mass-msun",
-                "1e9",
-                "2e9",
-                "--dm-part-mass-msun",
-                "1e9",
-                "--star-mass-msun",
-                "1e8",
-                "2e8",
-                "--bulge-fraction",
-                "0.0",
-                "0.0",
-                "--star-part-mass-msun",
-                "1e8",
-                "--gas-mass-msun",
-                "1e8",
-                "2e8",
-                "--gas-part-mass-msun",
-                "1e8",
-                "--c200",
-                "10",
-                "10",
-                "--stellar-disk-scale-length-kpc",
-                "1.0",
-                "1.0",
-                "--stellar-disk-scale-height-kpc",
-                "0.1",
-                "0.1",
-                "--gas-disk-scale-length-kpc",
-                "1.0",
-                "1.0",
-                "--gas-disk-scale-height-kpc",
-                "0.1",
-                "0.1",
-                "--bulge-a-kpc",
-                "0.5",
-                "0.5",
-                "--nR-grid",
-                "16",
-                "--nz-grid",
-                "16",
-                "--eps-grid",
-                "0.5",
-                "--time-end-gyr",
-                "0.01",
-                "--snapshot-dt-myr",
-                "5",
+            params_file = Path(tmpdir) / "test_params.yml"
+            galaxy = _tiny_galaxy_config(ic_file, params_file)["galaxies"][0]
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["simulation"]["box_kpc"] = 200
+            config["orbit"] = {"type": "parabolic", "r_init_kpc": 40, "r_peri_kpc": 5}
+            config["galaxies"] = [
+                galaxy,
+                {
+                    **galaxy,
+                    "masses": {
+                        "dm_msun": 2e9,
+                        "stars_msun": 2e8,
+                        "gas_msun": 2e8,
+                        "bulge_fraction": 0.0,
+                    },
+                },
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = _run_generator(config, tmpdir)
 
             assert result.returncode == 0, result.stderr
             assert ic_file.exists()
-            assert yaml_file.exists()
+            assert params_file.exists()
             with h5py.File(ic_file, "r") as f:
                 assert f["Header"].attrs["NumPart_Total"][1] == 3
+
+    def test_mw_m31_example_config_parses(self):
+        """The shipped MW-M31 example stays in sync with the generator schema."""
+        config_file = Path(__file__).parents[1] / "examples" / "mw_m31_merger.yml"
+
+        args = _apply_config_file(_default_generator_args(), str(config_file))
+        _normalise_per_galaxy_args(args)
+        positions, velocities = _resolve_galaxy_placement(args)
+
+        assert args.n_galaxies == 2
+        assert args.orbit == "parabolic"
+        assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 600.0)
+        assert np.all(np.isfinite(velocities))
 
     def test_multi_galaxy_positions_must_lie_inside_box(self):
         """Out-of-box galaxy coordinates are rejected."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
-            yaml_file = Path(tmpdir) / "test_params.yml"
-
-            cmd = [
-                sys.executable,
-                "-m",
-                "swift_spiral_ics.cli.generate",
-                "--out-ics",
-                str(ic_file),
-                "--out-params",
-                str(yaml_file),
-                "--box-kpc",
-                "100",
-                "--n-galaxies",
-                "2",
-                "--xs",
-                "10",
-                "110",
-                "--ys",
-                "50",
-                "50",
-                "--zs",
-                "50",
-                "50",
+            params_file = Path(tmpdir) / "test_params.yml"
+            galaxy = _tiny_galaxy_config(ic_file, params_file)["galaxies"][0]
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["galaxies"] = [
+                {**galaxy, "placement": {"position_kpc": [10, 50, 50]}},
+                {**galaxy, "placement": {"position_kpc": [110, 50, 50]}},
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = _run_generator(config, tmpdir)
 
             assert result.returncode != 0
             assert "must lie within 0 and --box-kpc" in result.stderr
@@ -352,67 +222,16 @@ class TestFullPipeline:
         """Random background gas can be restricted to a sphere around the box centre."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
-            yaml_file = Path(tmpdir) / "test_params.yml"
+            params_file = Path(tmpdir) / "test_params.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["particle_masses"]["gas_msun"] = 1e7
+            config["background"] = {
+                "gas_density_msun_kpc3": 1e4,
+                "grid_kpc": 0,
+                "radius_kpc": 20,
+            }
 
-            cmd = [
-                sys.executable,
-                "-m",
-                "swift_spiral_ics.cli.generate",
-                "--out-ics",
-                str(ic_file),
-                "--out-params",
-                str(yaml_file),
-                "--seed",
-                "42",
-                "--box-kpc",
-                "100",
-                "--n-galaxies",
-                "1",
-                "--dm-mass-msun",
-                "1e9",
-                "--dm-part-mass-msun",
-                "1e9",
-                "--star-mass-msun",
-                "1e8",
-                "--bulge-fraction",
-                "0.0",
-                "--star-part-mass-msun",
-                "1e8",
-                "--gas-mass-msun",
-                "1e8",
-                "--gas-part-mass-msun",
-                "1e7",
-                "--c200",
-                "10",
-                "--stellar-disk-scale-length-kpc",
-                "1.0",
-                "--stellar-disk-scale-height-kpc",
-                "0.1",
-                "--gas-disk-scale-length-kpc",
-                "1.0",
-                "--gas-disk-scale-height-kpc",
-                "0.1",
-                "--bulge-a-kpc",
-                "0.5",
-                "--nR-grid",
-                "16",
-                "--nz-grid",
-                "16",
-                "--eps-grid",
-                "0.5",
-                "--time-end-gyr",
-                "0.01",
-                "--snapshot-dt-myr",
-                "5",
-                "--bg-gas-density-msun-kpc3",
-                "1e4",
-                "--bg-grid-kpc",
-                "0",
-                "--bg-radius-kpc",
-                "20",
-            ]
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = _run_generator(config, tmpdir)
 
             assert result.returncode == 0, result.stderr
             with h5py.File(ic_file, "r") as f:
@@ -425,67 +244,16 @@ class TestFullPipeline:
         """Grid background gas can be restricted to a sphere around the box centre."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
-            yaml_file = Path(tmpdir) / "test_params.yml"
+            params_file = Path(tmpdir) / "test_params.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["particle_masses"]["gas_msun"] = 1e7
+            config["background"] = {
+                "gas_density_msun_kpc3": 1e4,
+                "grid_kpc": 10,
+                "radius_kpc": 20,
+            }
 
-            cmd = [
-                sys.executable,
-                "-m",
-                "swift_spiral_ics.cli.generate",
-                "--out-ics",
-                str(ic_file),
-                "--out-params",
-                str(yaml_file),
-                "--seed",
-                "42",
-                "--box-kpc",
-                "100",
-                "--n-galaxies",
-                "1",
-                "--dm-mass-msun",
-                "1e9",
-                "--dm-part-mass-msun",
-                "1e9",
-                "--star-mass-msun",
-                "1e8",
-                "--bulge-fraction",
-                "0.0",
-                "--star-part-mass-msun",
-                "1e8",
-                "--gas-mass-msun",
-                "1e8",
-                "--gas-part-mass-msun",
-                "1e7",
-                "--c200",
-                "10",
-                "--stellar-disk-scale-length-kpc",
-                "1.0",
-                "--stellar-disk-scale-height-kpc",
-                "0.1",
-                "--gas-disk-scale-length-kpc",
-                "1.0",
-                "--gas-disk-scale-height-kpc",
-                "0.1",
-                "--bulge-a-kpc",
-                "0.5",
-                "--nR-grid",
-                "16",
-                "--nz-grid",
-                "16",
-                "--eps-grid",
-                "0.5",
-                "--time-end-gyr",
-                "0.01",
-                "--snapshot-dt-myr",
-                "5",
-                "--bg-gas-density-msun-kpc3",
-                "1e4",
-                "--bg-grid-kpc",
-                "10",
-                "--bg-radius-kpc",
-                "20",
-            ]
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = _run_generator(config, tmpdir)
 
             assert result.returncode == 0, result.stderr
             with h5py.File(ic_file, "r") as f:
@@ -593,5 +361,4 @@ class TestMassConservation:
         N = int(round(M_requested / m_part))
         M_achieved = N * m_part
 
-        # Should be within half a particle mass
         assert abs(M_achieved - M_requested) <= 0.5 * m_part
