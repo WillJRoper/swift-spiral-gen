@@ -209,6 +209,34 @@ Disk orientations are given by:
 
 If an axis is omitted while positions are otherwise provided, that axis defaults to the box centre for every galaxy.
 
+Alternatively, for two-galaxy encounters, the generator can compute a parabolic orbit in the centre-of-mass frame:
+
+- `--orbit parabolic`
+- `--orbit-r-init-kpc`: initial galaxy-centre separation
+- `--orbit-r-peri-kpc`: target parabolic pericentre distance
+- `--orbit-plane-angle-deg`: optional orbit-plane rotation around the y-axis
+
+When using `--orbit parabolic`, do not also provide `--xs`, `--ys`, `--zs`, `--vxs`, `--vys`, or `--vzs`; those COM positions and velocities are computed from the galaxy masses.
+
+Example:
+
+```bash
+swift-spiral-ics \
+  --out-ics mw_m31_parabolic.hdf5 \
+  --out-params mw_m31_parabolic.yml \
+  --box-kpc 2000 \
+  --n-galaxies 2 \
+  --orbit parabolic \
+  --orbit-r-init-kpc 600 \
+  --orbit-r-peri-kpc 75 \
+  --dm-mass-msun 1.0e12 1.5e12 \
+  --dm-part-mass-msun 1e7 \
+  --star-mass-msun 6.0e10 1.0e11 \
+  --star-part-mass-msun 1e6 \
+  --gas-mass-msun 1.0e10 7.0e9 \
+  --gas-part-mass-msun 1e6
+```
+
 ### Spiral Structure
 
 - `--n-arms`: number of spiral arms
@@ -308,6 +336,10 @@ Background behavior:
 - `--star-part-mass-msun`
 - `--gas-part-mass-msun`
 - `--box-kpc`
+- `--orbit`
+- `--orbit-r-init-kpc`
+- `--orbit-r-peri-kpc`
+- `--orbit-plane-angle-deg`
 - `--max-timestep-gyr`
 - `--dt-min-gyr`
 - `--time-end-gyr`

@@ -1,12 +1,18 @@
 """Integration tests for full IC generation pipeline."""
 
-import sys
+import argparse
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import h5py
+import numpy as np
 
+from swift_spiral_ics.cli.generate import (
+    _normalise_per_galaxy_args,
+    _resolve_galaxy_placement,
+)
 from swift_spiral_ics.physics.sampling import (
     sample_exponential_disc,
     sample_hernquist_bulge,
@@ -17,6 +23,60 @@ from swift_spiral_ics.utils.random import get_rng
 
 class TestFullPipeline:
     """Test complete IC generation pipeline."""
+
+    def test_parabolic_orbit_placement_is_com_balanced(self):
+        """Parabolic orbit mode computes two COM-balanced galaxy centres."""
+        args = argparse.Namespace(
+            n_galaxies=2,
+            box_kpc=200.0,
+            dm_mass_msun=[1.0e12, 2.0e12],
+            star_mass_msun=[6.0e10, 1.0e11],
+            gas_mass_msun=[1.0e10, 2.0e10],
+            bulge_fraction=[0.2, 0.3],
+            dm_part_mass_msun=1.0e9,
+            star_part_mass_msun=1.0e8,
+            gas_part_mass_msun=1.0e8,
+            c200=[10.0, 10.0],
+            bulge_a_kpc=[0.8, 1.0],
+            bulge_rmax_scale=[50.0],
+            stellar_disk_scale_length_kpc=[3.5, 5.0],
+            stellar_disk_scale_height_kpc=[0.35, 0.5],
+            Q_star=[2.0],
+            gas_disk_scale_length_kpc=[7.0, 10.0],
+            gas_disk_scale_height_kpc=[0.1, 0.15],
+            Q_gas=[1.5],
+            n_arms=[2],
+            pitch_deg=[15.0],
+            arm_strength=[0.15],
+            arm_stream_frac=[0.02],
+            bar_strength=[0.1],
+            bar_radius=[3.0],
+            bar_q=[0.3],
+            bar_angle=[0.0],
+            inclination_deg=None,
+            xs=None,
+            ys=None,
+            zs=None,
+            vxs=None,
+            vys=None,
+            vzs=None,
+            orbit="parabolic",
+            orbit_r_init_kpc=80.0,
+            orbit_r_peri_kpc=10.0,
+            orbit_plane_angle_deg=0.0,
+        )
+
+        _normalise_per_galaxy_args(args)
+        positions, velocities = _resolve_galaxy_placement(args)
+        masses = np.asarray([
+            args.m200_msun[i] + args.m_star_msun[i] + args.m_bulge_msun[i] + args.m_gas_msun[i]
+            for i in range(args.n_galaxies)
+        ])
+
+        assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 80.0)
+        assert np.allclose(np.average(positions, axis=0, weights=masses), 0.0)
+        assert np.allclose(np.average(velocities, axis=0, weights=masses), 0.0)
+        assert velocities[1, 0] < velocities[0, 0]
 
     def test_generate_tiny_galaxy(self):
         """Test generating a tiny galaxy (fast smoke test)."""
@@ -171,6 +231,88 @@ class TestFullPipeline:
                 dm_x_kpc = f["PartType1/Coordinates"][:, 0] * 1000.0
                 assert dm_x_kpc.min() < 20.0
                 assert dm_x_kpc.max() > 80.0
+
+    def test_generate_tiny_parabolic_merger(self):
+        """The CLI can generate a two-galaxy parabolic merger without manual COM inputs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            yaml_file = Path(tmpdir) / "test_params.yml"
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "swift_spiral_ics.cli.generate",
+                "--out-ics",
+                str(ic_file),
+                "--out-params",
+                str(yaml_file),
+                "--seed",
+                "42",
+                "--box-kpc",
+                "200",
+                "--n-galaxies",
+                "2",
+                "--orbit",
+                "parabolic",
+                "--orbit-r-init-kpc",
+                "40",
+                "--orbit-r-peri-kpc",
+                "5",
+                "--dm-mass-msun",
+                "1e9",
+                "2e9",
+                "--dm-part-mass-msun",
+                "1e9",
+                "--star-mass-msun",
+                "1e8",
+                "2e8",
+                "--bulge-fraction",
+                "0.0",
+                "0.0",
+                "--star-part-mass-msun",
+                "1e8",
+                "--gas-mass-msun",
+                "1e8",
+                "2e8",
+                "--gas-part-mass-msun",
+                "1e8",
+                "--c200",
+                "10",
+                "10",
+                "--stellar-disk-scale-length-kpc",
+                "1.0",
+                "1.0",
+                "--stellar-disk-scale-height-kpc",
+                "0.1",
+                "0.1",
+                "--gas-disk-scale-length-kpc",
+                "1.0",
+                "1.0",
+                "--gas-disk-scale-height-kpc",
+                "0.1",
+                "0.1",
+                "--bulge-a-kpc",
+                "0.5",
+                "0.5",
+                "--nR-grid",
+                "16",
+                "--nz-grid",
+                "16",
+                "--eps-grid",
+                "0.5",
+                "--time-end-gyr",
+                "0.01",
+                "--snapshot-dt-myr",
+                "5",
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            assert result.returncode == 0, result.stderr
+            assert ic_file.exists()
+            assert yaml_file.exists()
+            with h5py.File(ic_file, "r") as f:
+                assert f["Header"].attrs["NumPart_Total"][1] == 3
 
     def test_multi_galaxy_positions_must_lie_inside_box(self):
         """Out-of-box galaxy coordinates are rejected."""

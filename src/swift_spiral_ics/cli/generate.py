@@ -10,6 +10,7 @@ import numpy as np
 from ..io.swift_writer import write_swift_ic
 from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
+from ..physics.orbits import parabolic_orbit_initial_conditions
 from ..physics.profiles import nfw_params
 from ..physics.sampling import (
     sample_bulge_velocities,
@@ -169,7 +170,71 @@ def _resolve_axis_values(
     return np.asarray(values, dtype=float)
 
 
+def _total_galaxy_masses(args: argparse.Namespace) -> np.ndarray:
+    return np.asarray(
+        [
+            args.m200_msun[i] + args.m_star_msun[i] + args.m_bulge_msun[i] + args.m_gas_msun[i]
+            for i in range(args.n_galaxies)
+        ],
+        dtype=float,
+    )
+
+
+def _resolve_parabolic_orbit_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+    if args.n_galaxies != 2:
+        raise ValueError("--orbit parabolic currently requires --n-galaxies 2")
+
+    manual_position_args = (args.xs, args.ys, args.zs)
+    manual_velocity_args = (args.vxs, args.vys, args.vzs)
+    if any(value is not None for value in (*manual_position_args, *manual_velocity_args)):
+        raise ValueError(
+            "--orbit parabolic computes positions and velocities; do not also provide "
+            "--xs, --ys, --zs, --vxs, --vys, or --vzs"
+        )
+
+    if args.orbit_r_init_kpc is None:
+        raise ValueError("--orbit-r-init-kpc is required when --orbit parabolic")
+    if args.orbit_r_peri_kpc is None:
+        raise ValueError("--orbit-r-peri-kpc is required when --orbit parabolic")
+    if args.orbit_r_init_kpc <= 0.0:
+        raise ValueError("--orbit-r-init-kpc must be positive")
+    if args.orbit_r_peri_kpc < 0.0:
+        raise ValueError("--orbit-r-peri-kpc must be non-negative")
+
+    masses = _total_galaxy_masses(args)
+    rel_pos, rel_vel = parabolic_orbit_initial_conditions(
+        masses[0],
+        masses[1],
+        args.orbit_r_init_kpc,
+        args.orbit_r_peri_kpc,
+        args.orbit_plane_angle_deg,
+    )
+
+    total_mass = masses.sum()
+    positions = np.vstack([
+        -masses[1] / total_mass * rel_pos,
+        masses[0] / total_mass * rel_pos,
+    ])
+    velocities = np.vstack([
+        -masses[1] / total_mass * rel_vel,
+        masses[0] / total_mass * rel_vel,
+    ])
+
+    box_center = args.box_kpc / 2.0
+    box_positions = positions + box_center
+    if np.any(box_positions < 0.0) or np.any(box_positions > args.box_kpc):
+        raise ValueError(
+            "Parabolic orbit galaxy centres lie outside the box; increase --box-kpc or reduce "
+            "--orbit-r-init-kpc"
+        )
+
+    return positions, velocities
+
+
 def _resolve_galaxy_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+    if args.orbit == "parabolic":
+        return _resolve_parabolic_orbit_placement(args)
+
     xs = _resolve_axis_values(args.xs, args.n_galaxies, "--xs")
     ys = _resolve_axis_values(args.ys, args.n_galaxies, "--ys")
     zs = _resolve_axis_values(args.zs, args.n_galaxies, "--zs")
@@ -778,6 +843,30 @@ def main():
         type=float,
         default=None,
         help="Per-galaxy bulk z velocities in km/s.",
+    )
+    parser.add_argument(
+        "--orbit",
+        choices=["manual", "parabolic"],
+        default="manual",
+        help="Galaxy COM orbit setup. 'manual' uses --xs/--ys/--zs and --vxs/--vys/--vzs.",
+    )
+    parser.add_argument(
+        "--orbit-r-init-kpc",
+        type=float,
+        default=None,
+        help="Initial galaxy-centre separation for --orbit parabolic in kpc.",
+    )
+    parser.add_argument(
+        "--orbit-r-peri-kpc",
+        type=float,
+        default=None,
+        help="Target parabolic pericentre distance for --orbit parabolic in kpc.",
+    )
+    parser.add_argument(
+        "--orbit-plane-angle-deg",
+        type=float,
+        default=0.0,
+        help="Rotate the parabolic orbit plane around the y-axis by this angle in degrees.",
     )
 
     # Halo properties
