@@ -1,21 +1,36 @@
 """Particle sampling functions for galaxy components."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from scipy import optimize
+from numba import njit
 from scipy.special import lambertw
 from tqdm import tqdm
-from numba import njit
-from .profiles import nfw_params # Keep for sampling positions
-from .kinematics import escape_velocity_from_grid, gas_dispersion_from_temperature, jeans_dispersion_spherical_from_grid
-from .perturbations import bar_density_modulation, bar_streaming_velocity, apply_position_perturbation_bar, spiral_streaming_velocity
+
+from .kinematics import (
+    escape_velocity_from_grid,
+    jeans_dispersion_spherical_from_grid,
+)
+from .perturbations import (
+    apply_position_perturbation_bar,
+    bar_density_modulation,
+    bar_streaming_velocity,
+    spiral_streaming_velocity,
+)
+from .profiles import nfw_params  # Keep for sampling positions
+
+if TYPE_CHECKING:
+    from .grid_solver import GalaxyGridSolver
 
 
 @njit
 def _spiral_modulation_jit(
-    R: np.ndarray, 
-    phi: np.ndarray, 
-    arm_strength: float, 
-    n_arms: int, 
+    R: np.ndarray,
+    phi: np.ndarray,
+    arm_strength: float,
+    n_arms: int,
     pitch_deg: float,
     R_d: float
 ) -> np.ndarray:
@@ -23,7 +38,7 @@ def _spiral_modulation_jit(
     # Hardcoded parameters matching standard logic
     R_min = 0.5 * R_d
     R_max = 5.0 * R_d
-    
+
     # Envelope
     envelope = np.ones_like(R)
     for i in range(len(R)):
@@ -36,19 +51,19 @@ def _spiral_modulation_jit(
             envelope[i] = 0.0
         elif r_val > R_max - 2.0:
             envelope[i] = (R_max - r_val) / 2.0
-            
+
     # Phase
     pitch_rad = pitch_deg * np.pi / 180.0
     tan_pitch = np.tan(pitch_rad)
     R_0 = 8.0 # Reference radius
-    
+
     # Phase calculation
     # phase = n_arms * (phi - log(R/R_0)/tan_pitch)
     phase = np.zeros_like(phi)
     for i in range(len(R)):
         if R[i] > 0:
             phase[i] = n_arms * (phi[i] - np.log(R[i] / R_0) / tan_pitch)
-            
+
     # Modulation
     modulation = 1.0 + arm_strength * envelope * np.cos(phase)
     return modulation
@@ -90,16 +105,16 @@ def sample_nfw_halo(
     # Enforce a minimum radius to avoid singularity at r=0
     r_min = 1e-3  # kpc, 1 pc minimum radius
     r_grid = np.geomspace(max(r_min, 1e-4 * r_s), r_max, n_grid)
-    
+
     cdf_grid = cumulative_mass_fraction(r_grid)
-    
+
     # Ensure strict monotonicity and boundary conditions
     cdf_grid = cdf_grid - cdf_grid[0] # Shift so it starts at 0 relative to r_min
     cdf_grid = cdf_grid / cdf_grid[-1] # Normalize to 1
-    
+
     # Sample uniform random numbers
     u = rng.uniform(0, 1, N)
-    
+
     # Interpolate to get radii
     r = np.interp(u, cdf_grid, r_grid)
 
@@ -202,41 +217,41 @@ def sample_exponential_disc(
             # Rejection sample until all are accepted
             max_iters = 100
             keep = np.zeros(N, dtype=bool)
-            
+
             pbar = tqdm(total=N, desc="Sampling spiral arms")
-            
+
             for _ in range(max_iters):
                 # Calculate modulation for current candidates using JIT
                 modulation = _spiral_modulation_jit(
                     R[~keep], phi[~keep], arm_strength, n_arms, pitch_deg, R_d
                 )
-                
+
                 # Acceptance probability: rho_pert / rho_max
                 # rho_max is rho_base * (1 + arm_strength)
                 accept_prob = modulation / (1.0 + arm_strength)
-                
+
                 draw = rng.uniform(0, 1, np.count_nonzero(~keep))
                 newly_kept_local = draw < accept_prob
-                
+
                 # Update global keep mask
                 # Need to map local True/False back to full array indices
                 indices_to_check = np.where(~keep)[0]
                 indices_kept = indices_to_check[newly_kept_local]
                 keep[indices_kept] = True
-                
+
                 pbar.update(len(indices_kept))
-                
+
                 if np.all(keep):
                     break
-                
+
                 # Resample R, phi for remaining rejects
                 idx_reject = np.where(~keep)[0]
                 u_new = rng.uniform(0, 1, idx_reject.size)
                 R[idx_reject] = _sample_R(u_new)
                 phi[idx_reject] = rng.uniform(0, 2 * np.pi, idx_reject.size)
-            
+
             pbar.close()
-            
+
             if not np.all(keep):
                 print(f"Warning: Spiral arm sampling did not fully converge after {max_iters} iterations. {np.count_nonzero(~keep)} particles may be biased.")
 
@@ -280,7 +295,7 @@ def sample_halo_velocities(
     z: np.ndarray,
     mass_halo: np.ndarray,
     rng: np.random.Generator,
-    grid_solver: "GalaxyGridSolver",
+    grid_solver: GalaxyGridSolver,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for halo particles using Jeans equation.
 
@@ -331,7 +346,7 @@ def sample_bulge_velocities(
     z: np.ndarray,
     mass_bulge: np.ndarray,
     rng: np.random.Generator,
-    grid_solver: "GalaxyGridSolver",
+    grid_solver: GalaxyGridSolver,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample velocities for bulge particles using Jeans equation.
 
@@ -386,7 +401,7 @@ def sample_disc_velocities(
     z_d: float,
     Q_target: float,
     rng: np.random.Generator,
-    grid_solver: "GalaxyGridSolver",
+    grid_solver: GalaxyGridSolver,
     spiral_params: dict | None = None,
     bar_params: dict | None = None,
     is_gas: bool = False,
