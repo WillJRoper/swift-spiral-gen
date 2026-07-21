@@ -68,20 +68,22 @@ grid:
   # Also used as the gravity softening length written into the SWIFT YAML.
   eps_kpc: 0.8
 
-  # Scheduler/domain controls in the generated SWIFT YAML. The h_max fraction
-  # must stay small enough that EAGLE feedback/cooling does not ask SWIFT to
-  # coarsen the top-level mesh during the run. With this 2 Mpc box and 16
-  # top-level cells, 0.05 gives h_max = 6.25 kpc.
-  h_max_cell_fraction: 0.05
+  # Scheduler/domain controls in the generated SWIFT YAML. With this 2 Mpc box
+  # and 16 top-level cells, 0.25 gives h_max = 31.25 kpc. The low-density gas
+  # background below should prevent the pathological vacuum smoothing lengths
+  # that made the earlier no-background setup fail.
+  h_max_cell_fraction: 0.25
   scheduler_tasks_per_cell: 100
   max_top_level_cells: 16
 
 background:
-  # Optional uniform background medium. Disabled here to keep the first merger
-  # test focused on the two galaxies and to minimize particle count.
-  gas_density_msun_kpc3: 0.0
+  # Low-density CGM/IGM-like gas background. This avoids evolving the galaxies
+  # into a numerical vacuum while keeping the added particle count modest.
+  # At gas_msun = 1e6 and radius_kpc = 900 this adds about 31k gas particles.
+  gas_density_msun_kpc3: 10.0
   dm_density_msun_kpc3: 0.0
   grid_kpc: 0.0
+  radius_kpc: 900
 
 galaxies:
   - name: Milky Way
