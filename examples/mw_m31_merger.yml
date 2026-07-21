@@ -68,8 +68,11 @@ grid:
   # Also used as the gravity softening length written into the SWIFT YAML.
   eps_kpc: 0.8
 
-  # Scheduler/domain controls in the generated SWIFT YAML.
-  h_max_cell_fraction: 0.5
+  # Scheduler/domain controls in the generated SWIFT YAML. The h_max fraction
+  # must stay small enough that EAGLE feedback/cooling does not ask SWIFT to
+  # coarsen the top-level mesh during the run. With this 2 Mpc box and 16
+  # top-level cells, 0.05 gives h_max = 6.25 kpc.
+  h_max_cell_fraction: 0.05
   scheduler_tasks_per_cell: 100
   max_top_level_cells: 16
 
