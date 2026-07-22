@@ -110,6 +110,24 @@ Dark matter is not disk-based. It is always treated as an NFW halo.
 - `galaxies[].bulge.a_kpc`: Hernquist bulge scale radius
 - `galaxies[].bulge.rmax_scale`: bulge truncation radius in units of `a`
 
+### Central Black Holes
+
+- `galaxies[].black_hole.mass_msun`: optional central black-hole mass written as a `PartType5` particle
+
+If omitted or set to `0`, no explicit black hole is written for that galaxy. When present, the black hole is placed at the galaxy centre and receives the same orbital bulk velocity as the galaxy.
+
+### Circumgalactic Medium
+
+- `galaxies[].cgm.enabled`: add an approximate spherical hot CGM component
+- `galaxies[].cgm.mass_msun`: total CGM gas mass
+- `galaxies[].cgm.r_min_kpc`: inner sampling radius
+- `galaxies[].cgm.r_max_kpc`: outer sampling radius
+- `galaxies[].cgm.core_radius_kpc`: beta-profile core radius
+- `galaxies[].cgm.beta`: beta-profile slope parameter
+- `galaxies[].cgm.temperature_K`: gas temperature used for internal energy
+
+The CGM sampler uses a spherical beta-profile-like density law and assigns the galaxy bulk velocity. It is an approximate hot halo, not a hydrostatic equilibrium solution.
+
 ### Multi-Galaxy Placement
 
 Positions are literal box coordinates in kpc and must lie between `0` and `simulation.box_kpc`:
@@ -123,17 +141,28 @@ Bulk velocities are given in km/s:
 Disk orientations are given by:
 
 - `galaxies[].placement.inclination_deg`
+- `galaxies[].placement.node_angle_deg`
 
 `position_kpc` and `velocity_kms` are three-element vectors. If no velocity is provided, the galaxy receives zero bulk velocity.
 
-Alternatively, for two-galaxy encounters, the generator can compute a parabolic orbit in the centre-of-mass frame:
+Alternatively, for two-galaxy encounters, the generator can compute centre-of-mass positions and velocities from an orbit block.
+
+For observed-like MW-M31 analogues, use:
+
+- `orbit.type: relative_velocity`
+- `orbit.separation_kpc`: initial galaxy-centre separation
+- `orbit.radial_velocity_kms`: relative radial velocity; negative values approach
+- `orbit.tangential_velocity_kms`: relative tangential velocity
+- `orbit.plane_angle_deg`: optional orbit-plane rotation around the y-axis
+
+For idealized controlled encounters, use:
 
 - `orbit.type: parabolic`
 - `orbit.r_init_kpc`: initial galaxy-centre separation
 - `orbit.r_peri_kpc`: target parabolic pericentre distance
 - `orbit.plane_angle_deg`: optional orbit-plane rotation around the y-axis
 
-When using `orbit.type: parabolic`, do not also provide manual positions or velocities; those COM positions and velocities are computed from the galaxy masses.
+When using either orbit mode, do not also provide manual positions or velocities; those COM positions and velocities are computed from the galaxy masses.
 
 ### Spiral Structure
 

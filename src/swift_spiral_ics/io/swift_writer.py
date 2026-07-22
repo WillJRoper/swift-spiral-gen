@@ -22,6 +22,7 @@ def write_swift_ic(
         N_dm = len(particle_data.get("dm", {}).get("pos", []))
         N_gas = len(particle_data.get("gas", {}).get("pos", []))
         N_stars = len(particle_data.get("stars", {}).get("pos", []))
+        N_black_holes = len(particle_data.get("black_holes", {}).get("pos", []))
 
         # Small jitter helper to avoid exact duplicates at cell boundaries
         rng_jitter = np.random.default_rng(42)
@@ -30,10 +31,12 @@ def write_swift_ic(
         header = f.create_group("Header")
         header.attrs["Dimension"] = 3
         header.attrs["BoxSize"] = box_size * length_conv
-        header.attrs["NumPart_Total"] = np.array([N_gas, N_dm, 0, 0, N_stars, 0], dtype=np.uint32)
+        header.attrs["NumPart_Total"] = np.array(
+            [N_gas, N_dm, 0, 0, N_stars, N_black_holes], dtype=np.uint32
+        )
         header.attrs["NumPart_Total_HighWord"] = np.array([0, 0, 0, 0, 0, 0], dtype=np.uint32)
         header.attrs["NumPart_ThisFile"] = np.array(
-            [N_gas, N_dm, 0, 0, N_stars, 0], dtype=np.uint32
+            [N_gas, N_dm, 0, 0, N_stars, N_black_holes], dtype=np.uint32
         )
         header.attrs["MassTable"] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
         header.attrs["Flag_Entropy_ICs"] = 0
@@ -79,8 +82,11 @@ def write_swift_ic(
             current_id += N_gas
 
             # Internal energy and smoothing length
-            u_gas = compute_internal_energy(T=1e4)  # 10^4 K
-            gas_group.create_dataset("InternalEnergy", data=np.full(N_gas, u_gas, dtype=np.float32))
+            if "internal_energy" in gas_data:
+                internal_energy = np.asarray(gas_data["internal_energy"], dtype=np.float32)
+            else:
+                internal_energy = np.full(N_gas, compute_internal_energy(T=1e4), dtype=np.float32)
+            gas_group.create_dataset("InternalEnergy", data=internal_energy)
 
             # Estimate smoothing length
             h = estimate_smoothing_length(pos_wrapped, N_gas, box_size)
@@ -149,6 +155,53 @@ def write_swift_ic(
 
             star_group.create_dataset(
                 "SmoothingLength", data=(h_star * length_conv).astype(np.float32)
+            )
+
+        # Write black hole particles (PartType5)
+        if N_black_holes > 0:
+            black_hole_data = particle_data["black_holes"]
+            black_hole_group = f.create_group("PartType5")
+
+            pos = np.mod(black_hole_data["pos"], box_size)
+            vel = black_hole_data["vel"]
+            mass, black_hole_mass_conv = _get_mass_array(
+                black_hole_data, N_black_holes, m_part, mass_conv
+            )
+            subgrid_mass = np.asarray(
+                black_hole_data.get("subgrid_mass", mass), dtype=float
+            )
+
+            black_hole_group.create_dataset(
+                "Coordinates", data=(pos * length_conv).astype(np.float64)
+            )
+            black_hole_group.create_dataset("Velocities", data=vel.astype(np.float32))
+            black_hole_group.create_dataset(
+                "Masses", data=(mass * black_hole_mass_conv).astype(np.float32)
+            )
+            black_hole_group.create_dataset(
+                "DynamicalMasses", data=(mass * mass_conv).astype(np.float32)
+            )
+            black_hole_group.create_dataset(
+                "SubgridMasses", data=(subgrid_mass * mass_conv).astype(np.float32)
+            )
+            black_hole_group.create_dataset(
+                "ParticleIDs",
+                data=np.arange(current_id, current_id + N_black_holes, dtype=np.uint64),
+            )
+            current_id += N_black_holes
+
+            if N_gas > 0:
+                gas_pos_wrapped = np.mod(particle_data["gas"]["pos"], box_size)
+                h_gas = estimate_smoothing_length(gas_pos_wrapped, N_gas, box_size)
+                from scipy.spatial import cKDTree
+
+                gas_tree = cKDTree(gas_pos_wrapped)
+                _, gas_idx = gas_tree.query(pos, k=1)
+                h_black_hole = h_gas[gas_idx]
+            else:
+                h_black_hole = np.full(N_black_holes, box_size / 1000.0, dtype=float)
+            black_hole_group.create_dataset(
+                "SmoothingLength", data=(h_black_hole * length_conv).astype(np.float32)
             )
 
 

@@ -14,6 +14,7 @@ from swift_spiral_ics.cli.generate import (
     _default_generator_args,
     _normalise_per_galaxy_args,
     _resolve_galaxy_placement,
+    _rotate_disc_orientation,
 )
 from swift_spiral_ics.physics.sampling import (
     sample_exponential_disc,
@@ -64,6 +65,14 @@ def _run_generator(config: dict, tmpdir: str) -> subprocess.CompletedProcess:
 
 class TestFullPipeline:
     """Test complete IC generation pipeline."""
+
+    def test_node_angle_orientation_rotates_disc_frame(self):
+        """Disc orientation supports both node angle and inclination rotations."""
+        vector = np.array([[1.0, 0.0, 0.0]])
+
+        rotated = _rotate_disc_orientation(vector, inclination=90.0, node_angle=90.0)
+
+        assert np.allclose(rotated, [[0.0, 0.0, 1.0]], atol=1e-12)
 
     def test_yaml_config_maps_to_com_balanced_parabolic_placement(self):
         """Parabolic orbit configs compute two COM-balanced galaxy centres."""
@@ -119,6 +128,61 @@ class TestFullPipeline:
         assert np.allclose(np.average(positions, axis=0, weights=masses), 0.0)
         assert np.allclose(np.average(velocities, axis=0, weights=masses), 0.0)
         assert velocities[1, 0] < velocities[0, 0]
+
+    def test_yaml_config_maps_to_relative_velocity_orbit(self):
+        """Relative velocity orbit configs preserve requested separation and velocity."""
+        config = {
+            "simulation": {"box_kpc": 200.0},
+            "particle_masses": {"dm_msun": 1e9, "stars_msun": 1e8, "gas_msun": 1e8},
+            "orbit": {
+                "type": "relative_velocity",
+                "separation_kpc": 80.0,
+                "radial_velocity_kms": -110.0,
+                "tangential_velocity_kms": 30.0,
+            },
+            "galaxies": [
+                {
+                    "masses": {
+                        "dm_msun": 1.0e12,
+                        "stars_msun": 6.0e10,
+                        "gas_msun": 1.0e10,
+                        "bulge_fraction": 0.2,
+                    },
+                    "black_hole": {"mass_msun": 4.3e6},
+                },
+                {
+                    "masses": {
+                        "dm_msun": 2.0e12,
+                        "stars_msun": 1.0e11,
+                        "gas_msun": 2.0e10,
+                        "bulge_fraction": 0.3,
+                    },
+                    "black_hole": {"mass_msun": 1.4e8},
+                },
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = Path(tmpdir) / "generator.yml"
+            with open(config_file, "w") as handle:
+                yaml.safe_dump(config, handle)
+
+            args = _apply_config_file(_default_generator_args(), str(config_file))
+            _normalise_per_galaxy_args(args)
+            positions, velocities = _resolve_galaxy_placement(args)
+            masses = np.asarray([
+                args.m200_msun[i]
+                + args.m_star_msun[i]
+                + args.m_bulge_msun[i]
+                + args.m_gas_msun[i]
+                + args.black_hole_mass_msun[i]
+                for i in range(args.n_galaxies)
+            ])
+
+        assert np.allclose(positions[1] - positions[0], [80.0, 0.0, 0.0])
+        assert np.allclose(velocities[1] - velocities[0], [-110.0, 30.0, 0.0])
+        assert np.allclose(np.average(positions, axis=0, weights=masses), 0.0)
+        assert np.allclose(np.average(velocities, axis=0, weights=masses), 0.0)
 
     def test_generate_tiny_galaxy_from_yaml(self):
         """Test generating a tiny galaxy from a YAML config."""
@@ -188,6 +252,49 @@ class TestFullPipeline:
             with h5py.File(ic_file, "r") as f:
                 assert f["Header"].attrs["NumPart_Total"][1] == 3
 
+    def test_generate_central_black_hole_from_yaml(self):
+        """A configured central black hole is written as PartType5."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            params_file = Path(tmpdir) / "test_params.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["galaxies"][0]["black_hole"] = {"mass_msun": 4.3e6}
+
+            result = _run_generator(config, tmpdir)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                assert f["Header"].attrs["NumPart_Total"][5] == 1
+                assert "PartType5" in f
+                assert np.isclose(f["PartType5/Masses"][0], 4.3e6 / 1e10)
+                assert "DynamicalMasses" in f["PartType5"]
+                assert "SubgridMasses" in f["PartType5"]
+                assert "SmoothingLength" in f["PartType5"]
+
+    def test_generate_hot_cgm_from_yaml(self):
+        """A configured CGM adds hot gas particles around the galaxy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            params_file = Path(tmpdir) / "test_params.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["galaxies"][0]["cgm"] = {
+                "enabled": True,
+                "mass_msun": 2e8,
+                "r_min_kpc": 2.0,
+                "r_max_kpc": 5.0,
+                "core_radius_kpc": 2.0,
+                "beta": 0.5,
+                "temperature_K": 1e6,
+            }
+
+            result = _run_generator(config, tmpdir)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                assert f["Header"].attrs["NumPart_Total"][0] == 3
+                internal_energy = f["PartType0/InternalEnergy"][:]
+                assert internal_energy.max() > internal_energy.min()
+
     def test_mw_m31_example_config_parses(self):
         """The shipped MW-M31 example stays in sync with the generator schema."""
         config_file = Path(__file__).parents[1] / "examples" / "mw_m31_merger.yml"
@@ -197,8 +304,10 @@ class TestFullPipeline:
         positions, velocities = _resolve_galaxy_placement(args)
 
         assert args.n_galaxies == 2
-        assert args.orbit == "parabolic"
-        assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 600.0)
+        assert args.orbit == "relative_velocity"
+        assert args.black_hole_mass_msun == [4.3e6, 1.4e8]
+        assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 780.0)
+        assert np.allclose(velocities[1] - velocities[0], [-110.0, 17.0, 0.0])
         assert np.all(np.isfinite(velocities))
 
     def test_multi_galaxy_positions_must_lie_inside_box(self):

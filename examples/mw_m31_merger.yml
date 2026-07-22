@@ -3,11 +3,17 @@
 # Run with:
 #   swift-spiral-ics examples/mw_m31_merger.yml
 #
-# This file is intended as a readable starting point rather than a definitive
-# Local Group model. The mass model is deliberately simple and the initial
-# separation is shorter than the present-day MW-M31 distance so test runs reach
-# interaction sooner. All lengths are in kpc, velocities in km/s, masses in Msun,
-# and times in Gyr or Myr as indicated by the key names.
+# This file is intended as a data-motivated MW-M31 future-merger analogue for the
+# idealized machinery in this repository. It uses commonly adopted present-day
+# Local Group constraints: MW-M31 separation ~780 kpc, radial approach speed
+# ~-110 km/s, low tangential speed, M31 more massive and more bulge dominated
+# than the MW, explicit central SMBHs, and a low-density background medium.
+#
+# Remaining idealizations are explicit: isolated NFW+Hernquist+exponential-disc
+# galaxies, no LMC/M33/satellites, no cosmological environment, no structured CGM,
+# and only a single inclination angle per disc rather than full observed sky
+# orientation. All lengths are in kpc, velocities in km/s, masses in Msun, and
+# times in Gyr or Myr as indicated by the key names.
 
 output:
   # Initial-condition HDF5 file and SWIFT parameter YAML written by the generator.
@@ -17,8 +23,9 @@ output:
   snapshot_basename: snapshot
 
 simulation:
-  # Large enough to hold a 600 kpc binary plus extended NFW halos without wrapping.
-  box_kpc: 2000
+  # Large enough to hold a present-day-like 780 kpc binary plus extended NFW halos
+  # without immediate wrapping.
+  box_kpc: 2500
 
   # Reproducible stochastic particle sampling.
   seed: 42
@@ -28,10 +35,15 @@ simulation:
   max_timestep_gyr: 0.0005
   dt_min_gyr: 1.0e-6
 
-  # Five Gyr is long enough for this shortened-separation setup to evolve through
-  # the main interaction in typical trial runs.
-  time_end_gyr: 5.0
-  snapshot_dt_myr: 10.0
+  # Long integration for the present-day-like separation. A 4.5 Gyr test can be
+  # only first passage for this setup, so this example runs for 12 Gyr to capture
+  # extended post-passage evolution and final coalescence if the chosen masses and
+  # orbit merge efficiently.
+  time_end_gyr: 12.0
+
+  # 25 Myr cadence gives ~480 snapshots over 12 Gyr. Use 10 Myr only for shorter
+  # diagnostic runs; otherwise output volume becomes unnecessarily large.
+  snapshot_dt_myr: 25.0
   feedback_scale: 1.0
 
 particle_masses:
@@ -44,17 +56,19 @@ particle_masses:
   gas_msun: 1.0e6
 
 orbit:
-  # Parabolic means zero two-body orbital energy for the total galaxy masses.
-  # The generator places both galaxy centres in the centre-of-mass frame.
-  type: parabolic
+  # Observed-like two-body setup. The generator places both galaxy centres in the
+  # centre-of-mass frame, with the relative separation along x and the tangential
+  # component along y before applying plane_angle_deg.
+  type: relative_velocity
 
-  # Initial centre-to-centre separation. Present-day MW-M31 is about 780 kpc;
-  # 600 kpc is a practical lower-resolution test compromise.
-  r_init_kpc: 600
+  # Initial centre-to-centre separation. Present-day MW-M31 is about 770-780 kpc.
+  separation_kpc: 780
 
-  # Approximate target pericentre. Larger values make a more grazing encounter;
-  # smaller values are closer to head-on.
-  r_peri_kpc: 75
+  # Present-day M31 radial velocity relative to the MW is about -110 km/s. The
+  # tangential velocity is uncertain but HST-based constraints favour a very low
+  # value (~17 km/s, with large uncertainty), so this is close to radial.
+  radial_velocity_kms: -110
+  tangential_velocity_kms: 17
 
   # Rotate the orbital plane around the y-axis. Keep zero for an x-y orbit plane.
   plane_angle_deg: 0
@@ -68,8 +82,8 @@ grid:
   # Also used as the gravity softening length written into the SWIFT YAML.
   eps_kpc: 0.8
 
-  # Scheduler/domain controls in the generated SWIFT YAML. With this 2 Mpc box
-  # and 16 top-level cells, 0.25 gives h_max = 31.25 kpc. The low-density gas
+  # Scheduler/domain controls in the generated SWIFT YAML. With this 2.5 Mpc box
+  # and 16 top-level cells, 0.25 gives h_max = 39.06 kpc. The low-density gas
   # background below should prevent the pathological vacuum smoothing lengths
   # that made the earlier no-background setup fail.
   h_max_cell_fraction: 0.25
@@ -77,38 +91,53 @@ grid:
   max_top_level_cells: 16
 
 background:
-  # Low-density CGM/IGM-like gas background. This avoids evolving the galaxies
-  # into a numerical vacuum while keeping the added particle count modest.
-  # At gas_msun = 1e6 and radius_kpc = 900 this adds about 31k gas particles.
-  gas_density_msun_kpc3: 10.0
+  # Very low-density numerical floor outside the explicit galaxy CGM components
+  # below. At gas_msun = 1e6 and radius_kpc = 1200 this adds only ~7k particles.
+  gas_density_msun_kpc3: 1.0
   dm_density_msun_kpc3: 0.0
   grid_kpc: 0.0
-  radius_kpc: 900
+  radius_kpc: 1200
 
 galaxies:
   - name: Milky Way
     masses:
       # Halo mass is the NFW M200. Stellar mass is total stars before splitting
-      # into disc and bulge via bulge_fraction.
-      dm_msun: 1.0e12
+      # into disc and bulge via bulge_fraction. These values are close to common
+      # MW estimates: M200 ~ 1e12 Msun, Mstar ~ 5-6e10 Msun, cold gas ~ 1e10 Msun.
+      dm_msun: 1.1e12
       stars_msun: 6.0e10
-      gas_msun: 1.0e10
-      bulge_fraction: 0.1666666667
+      gas_msun: 1.2e10
+      bulge_fraction: 0.15
     halo:
       c200: 10
     bulge:
-      a_kpc: 0.8
+      a_kpc: 0.7
       rmax_scale: 50
     stellar_disk:
       # Exponential stellar disc scale length/height and target Toomre Q.
-      scale_length_kpc: 3.5
-      scale_height_kpc: 0.35
+      scale_length_kpc: 2.6
+      scale_height_kpc: 0.3
       Q: 2.0
     gas_disk:
       # Gas disc is more extended and thinner than the stellar disc.
-      scale_length_kpc: 7.0
+      scale_length_kpc: 5.5
       scale_height_kpc: 0.1
       Q: 1.5
+    black_hole:
+      # Sgr A* central SMBH. This writes an explicit PartType5 particle at the
+      # galaxy centre rather than relying on FoF seeding during the run.
+      mass_msun: 4.3e6
+    cgm:
+      # Approximate hot MW circumgalactic medium. This is not hydrostatic, but it
+      # is much closer than a uniform box background: a spherical beta-profile-like
+      # halo sampled from r_min to r_max with T ~ 10^6 K.
+      enabled: true
+      mass_msun: 5.0e10
+      r_min_kpc: 20
+      r_max_kpc: 300
+      core_radius_kpc: 20
+      beta: 0.5
+      temperature_K: 1.0e6
     spiral:
       # Mild spiral perturbation. Keep stream_frac small for a stable initial test.
       n_arms: 2
@@ -116,35 +145,55 @@ galaxies:
       strength: 0.15
       stream_frac: 0.02
     placement:
-      # With orbit.type: parabolic, placement only controls disc orientation;
+      # With orbit.type: relative_velocity, placement only controls disc orientation;
       # positions and bulk velocities are computed from the orbit block.
       inclination_deg: 0
+      node_angle_deg: 0
 
   - name: Andromeda
     masses:
-      # M31 is modeled as the more massive, more bulge-dominated galaxy.
+      # M31 is modeled as the more massive, larger, more bulge-dominated galaxy,
+      # with a stellar mass near 1e11 Msun and less cold gas than the MW. It has
+      # the larger halo, stellar mass, bulge fraction, stellar disc scale length,
+      # stellar scale height, and gas disc scale length in this setup.
       dm_msun: 1.5e12
-      stars_msun: 1.0e11
+      stars_msun: 1.03e11
       gas_msun: 7.0e9
-      bulge_fraction: 0.30
+      bulge_fraction: 0.31
     halo:
-      c200: 10
+      c200: 9.5
     bulge:
-      a_kpc: 1.2
+      a_kpc: 1.0
       rmax_scale: 50
     stellar_disk:
-      scale_length_kpc: 5.0
-      scale_height_kpc: 0.5
+      scale_length_kpc: 5.3
+      scale_height_kpc: 0.6
       Q: 2.0
     gas_disk:
-      scale_length_kpc: 10.0
+      scale_length_kpc: 8.0
       scale_height_kpc: 0.15
       Q: 1.5
+    black_hole:
+      # M31's central SMBH is much more massive than Sgr A*.
+      mass_msun: 1.4e8
+    cgm:
+      # Slightly more massive and extended hot halo for M31, consistent with M31
+      # being the larger system in this idealized analogue.
+      enabled: true
+      mass_msun: 7.0e10
+      r_min_kpc: 20
+      r_max_kpc: 350
+      core_radius_kpc: 25
+      beta: 0.5
+      temperature_K: 1.0e6
     spiral:
       n_arms: 2
       pitch_deg: 15
       strength: 0.15
       stream_frac: 0.02
     placement:
-      # Tilt M31 relative to the MW disc to avoid a purely coplanar encounter.
-      inclination_deg: 60
+      # M31's observed disc inclination is high (~77 deg). The generator only has
+      # inclination plus a node rotation, so this captures both the high tilt and
+      # approximate major-axis position angle (~38 deg) in this coordinate frame.
+      inclination_deg: 77
+      node_angle_deg: 38

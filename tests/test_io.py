@@ -72,6 +72,37 @@ class TestSwiftWriter:
                 assert f["PartType0/Velocities"].shape == (N, 3)
                 assert f["PartType0/Masses"].shape == (N,)
 
+    def test_write_swift_ic_black_hole_structure(self):
+        """Configured black holes are written as SWIFT PartType5 particles."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            particle_data = {
+                "gas": {
+                    "pos": np.random.uniform(0, 10, (100, 3)),
+                    "vel": np.random.uniform(-100, 100, (100, 3)),
+                },
+                "black_holes": {
+                    "pos": np.array([[5.0, 5.0, 5.0]]),
+                    "vel": np.array([[10.0, 0.0, 0.0]]),
+                    "mass": np.array([4.3e6]),
+                    "subgrid_mass": np.array([4.3e6]),
+                },
+            }
+
+            write_swift_ic(str(ic_file), 100.0, particle_data, 1e6)
+
+            with h5py.File(ic_file, "r") as f:
+                assert f["Header"].attrs["NumPart_Total"][5] == 1
+                assert "PartType5" in f
+                assert "Coordinates" in f["PartType5"]
+                assert "Velocities" in f["PartType5"]
+                assert "Masses" in f["PartType5"]
+                assert "DynamicalMasses" in f["PartType5"]
+                assert "SubgridMasses" in f["PartType5"]
+                assert "ParticleIDs" in f["PartType5"]
+                assert "SmoothingLength" in f["PartType5"]
+                assert np.isclose(f["PartType5/Masses"][0], 4.3e6 / 1e10)
+
     def test_particle_ids_unique(self):
         """Test particle IDs are unique across all types."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -101,6 +132,8 @@ class TestSwiftWriter:
                 all_ids.extend(f["PartType0/ParticleIDs"][:])
                 all_ids.extend(f["PartType1/ParticleIDs"][:])
                 all_ids.extend(f["PartType4/ParticleIDs"][:])
+                if "PartType5" in f:
+                    all_ids.extend(f["PartType5/ParticleIDs"][:])
 
                 assert len(all_ids) == len(set(all_ids))  # All unique
 

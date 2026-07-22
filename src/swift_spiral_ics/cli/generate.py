@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import yaml
 
-from ..io.swift_writer import write_swift_ic
+from ..io.swift_writer import compute_internal_energy, write_swift_ic
 from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
 from ..physics.orbits import parabolic_orbit_initial_conditions
@@ -134,6 +134,22 @@ def _normalise_per_galaxy_args(args: argparse.Namespace) -> None:
         args.gas_disk_scale_height_kpc, args.n_galaxies, "--gas-disk-scale-height-kpc"
     )
     args.Q_gas = _resolve_per_galaxy_values(args.Q_gas, args.n_galaxies, "--Q-gas")
+    args.black_hole_mass_msun = _resolve_per_galaxy_values(
+        args.black_hole_mass_msun,
+        args.n_galaxies,
+        "black_hole.mass_msun",
+    )
+    args.cgm_enabled = _resolve_per_galaxy_values(args.cgm_enabled, args.n_galaxies, "cgm.enabled")
+    args.cgm_mass_msun = _resolve_per_galaxy_values(args.cgm_mass_msun, args.n_galaxies, "cgm.mass_msun")
+    args.cgm_r_min_kpc = _resolve_per_galaxy_values(args.cgm_r_min_kpc, args.n_galaxies, "cgm.r_min_kpc")
+    args.cgm_r_max_kpc = _resolve_per_galaxy_values(args.cgm_r_max_kpc, args.n_galaxies, "cgm.r_max_kpc")
+    args.cgm_core_radius_kpc = _resolve_per_galaxy_values(
+        args.cgm_core_radius_kpc, args.n_galaxies, "cgm.core_radius_kpc"
+    )
+    args.cgm_beta = _resolve_per_galaxy_values(args.cgm_beta, args.n_galaxies, "cgm.beta")
+    args.cgm_temperature_K = _resolve_per_galaxy_values(
+        args.cgm_temperature_K, args.n_galaxies, "cgm.temperature_K"
+    )
     args.n_arms = _resolve_per_galaxy_values(args.n_arms, args.n_galaxies, "--n-arms")
     args.pitch_deg = _resolve_per_galaxy_values(args.pitch_deg, args.n_galaxies, "--pitch-deg")
     args.arm_strength = _resolve_per_galaxy_values(
@@ -157,6 +173,12 @@ def _normalise_per_galaxy_args(args: argparse.Namespace) -> None:
         )
     else:
         args.inclination_deg = [0.0] * args.n_galaxies
+    if args.node_angle_deg is not None:
+        args.node_angle_deg = _resolve_per_galaxy_values(
+            args.node_angle_deg, args.n_galaxies, "placement.node_angle_deg"
+        )
+    else:
+        args.node_angle_deg = [0.0] * args.n_galaxies
 
 
 def _resolve_axis_values(
@@ -174,7 +196,12 @@ def _resolve_axis_values(
 def _total_galaxy_masses(args: argparse.Namespace) -> np.ndarray:
     return np.asarray(
         [
-            args.m200_msun[i] + args.m_star_msun[i] + args.m_bulge_msun[i] + args.m_gas_msun[i]
+            args.m200_msun[i]
+            + args.m_star_msun[i]
+            + args.m_bulge_msun[i]
+            + args.m_gas_msun[i]
+            + args.black_hole_mass_msun[i]
+            + (args.cgm_mass_msun[i] if args.cgm_enabled[i] else 0.0)
             for i in range(args.n_galaxies)
         ],
         dtype=float,
@@ -232,9 +259,73 @@ def _resolve_parabolic_orbit_placement(args: argparse.Namespace) -> tuple[np.nda
     return positions, velocities
 
 
+def _rotate_orbit_plane(pos: np.ndarray, vel: np.ndarray, plane_angle_deg: float) -> tuple[np.ndarray, np.ndarray]:
+    if plane_angle_deg == 0.0:
+        return pos, vel
+
+    angle_rad = np.deg2rad(plane_angle_deg)
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+    rot_matrix = np.array([[cos_a, 0.0, sin_a], [0.0, 1.0, 0.0], [-sin_a, 0.0, cos_a]])
+    return rot_matrix @ pos, rot_matrix @ vel
+
+
+def _resolve_relative_velocity_orbit_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+    if args.n_galaxies != 2:
+        raise ValueError("orbit.type relative_velocity currently requires exactly two galaxies")
+
+    manual_position_args = (args.xs, args.ys, args.zs)
+    manual_velocity_args = (args.vxs, args.vys, args.vzs)
+    if any(value is not None for value in (*manual_position_args, *manual_velocity_args)):
+        raise ValueError(
+            "orbit.type relative_velocity computes positions and velocities; do not also provide "
+            "manual galaxy positions or velocities"
+        )
+
+    if args.orbit_separation_kpc is None:
+        raise ValueError("orbit.separation_kpc is required when orbit.type is relative_velocity")
+    if args.orbit_radial_velocity_kms is None:
+        raise ValueError("orbit.radial_velocity_kms is required when orbit.type is relative_velocity")
+    if args.orbit_tangential_velocity_kms is None:
+        raise ValueError("orbit.tangential_velocity_kms is required when orbit.type is relative_velocity")
+    if args.orbit_separation_kpc <= 0.0:
+        raise ValueError("orbit.separation_kpc must be positive")
+
+    rel_pos = np.array([args.orbit_separation_kpc, 0.0, 0.0], dtype=float)
+    rel_vel = np.array([
+        args.orbit_radial_velocity_kms,
+        args.orbit_tangential_velocity_kms,
+        0.0,
+    ], dtype=float)
+    rel_pos, rel_vel = _rotate_orbit_plane(rel_pos, rel_vel, args.orbit_plane_angle_deg)
+
+    masses = _total_galaxy_masses(args)
+    total_mass = masses.sum()
+    positions = np.vstack([
+        -masses[1] / total_mass * rel_pos,
+        masses[0] / total_mass * rel_pos,
+    ])
+    velocities = np.vstack([
+        -masses[1] / total_mass * rel_vel,
+        masses[0] / total_mass * rel_vel,
+    ])
+
+    box_center = args.box_kpc / 2.0
+    box_positions = positions + box_center
+    if np.any(box_positions < 0.0) or np.any(box_positions > args.box_kpc):
+        raise ValueError(
+            "Relative-velocity orbit galaxy centres lie outside the box; increase "
+            "simulation.box_kpc or reduce orbit.separation_kpc"
+        )
+
+    return positions, velocities
+
+
 def _resolve_galaxy_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
     if args.orbit == "parabolic":
         return _resolve_parabolic_orbit_placement(args)
+    if args.orbit == "relative_velocity":
+        return _resolve_relative_velocity_orbit_placement(args)
 
     xs = _resolve_axis_values(args.xs, args.n_galaxies, "--xs")
     ys = _resolve_axis_values(args.ys, args.n_galaxies, "--ys")
@@ -286,6 +377,7 @@ def generate_galaxy_particles(
     M_star = _get_galaxy_value(args.m_star_msun, galaxy_id)
     M_gas = _get_galaxy_value(args.m_gas_msun, galaxy_id)
     m_bulge_msun = _get_galaxy_value(args.m_bulge_msun, galaxy_id)
+    m_black_hole_msun = _get_galaxy_value(args.black_hole_mass_msun, galaxy_id)
     rd_star_kpc = _get_galaxy_value(args.stellar_disk_scale_length_kpc, galaxy_id)
     zd_star_kpc = _get_galaxy_value(args.stellar_disk_scale_height_kpc, galaxy_id)
     rd_gas_kpc = _get_galaxy_value(args.gas_disk_scale_length_kpc, galaxy_id)
@@ -458,12 +550,57 @@ def generate_galaxy_particles(
         } if args.bar_enabled else None,
     )
 
+    internal_energy_gas = np.full(len(pos_gas), compute_internal_energy(T=1e4), dtype=float)
+    if _get_galaxy_value(args.cgm_enabled, galaxy_id):
+        cgm_mass_msun = _get_galaxy_value(args.cgm_mass_msun, galaxy_id)
+        if cgm_mass_msun > 0.0:
+            n_cgm = _allocate_total_particles(cgm_mass_msun, args.gas_part_mass_msun, "cgm.mass_msun")
+            pos_cgm = _sample_cgm_beta_profile(
+                n_cgm,
+                _get_galaxy_value(args.cgm_r_min_kpc, galaxy_id),
+                _get_galaxy_value(args.cgm_r_max_kpc, galaxy_id),
+                _get_galaxy_value(args.cgm_core_radius_kpc, galaxy_id),
+                _get_galaxy_value(args.cgm_beta, galaxy_id),
+                rng,
+            )
+            vel_cgm = np.zeros_like(pos_cgm)
+            mass_cgm = _component_masses(cgm_mass_msun, n_cgm)
+            internal_energy_cgm = np.full(
+                n_cgm,
+                compute_internal_energy(T=_get_galaxy_value(args.cgm_temperature_K, galaxy_id)),
+                dtype=float,
+            )
+            pos_gas = np.vstack([pos_gas, pos_cgm])
+            vel_gas = np.vstack([vel_gas, vel_cgm])
+            mass_gas = np.concatenate([mass_gas, mass_cgm])
+            internal_energy_gas = np.concatenate([internal_energy_gas, internal_energy_cgm])
+
+    if m_black_hole_msun > 0.0:
+        pos_black_hole = np.zeros((1, 3), dtype=float)
+        vel_black_hole = np.zeros((1, 3), dtype=float)
+        mass_black_hole = np.asarray([m_black_hole_msun], dtype=float)
+    else:
+        pos_black_hole = np.empty((0, 3), dtype=float)
+        vel_black_hole = np.empty((0, 3), dtype=float)
+        mass_black_hole = np.empty(0, dtype=float)
+
     # Combine positions and masses for a single galaxy
     galaxy_data = {
         "dm": {"pos": pos_halo, "vel": vel_halo, "mass": mass_halo},
-        "gas": {"pos": pos_gas, "vel": vel_gas, "mass": mass_gas},
+        "gas": {
+            "pos": pos_gas,
+            "vel": vel_gas,
+            "mass": mass_gas,
+            "internal_energy": internal_energy_gas,
+        },
         "stars": {"pos": pos_star, "vel": vel_star, "mass": mass_star},
         "bulge": {"pos": pos_bulge, "vel": vel_bulge, "mass": mass_bulge},
+        "black_holes": {
+            "pos": pos_black_hole,
+            "vel": vel_black_hole,
+            "mass": mass_black_hole,
+            "subgrid_mass": mass_black_hole,
+        },
     }
 
     # Jitter identical positions
@@ -479,6 +616,49 @@ def _component_masses(total_mass: float, n_particles: int) -> np.ndarray:
     if n_particles <= 0:
         return np.empty(0, dtype=float)
     return np.full(n_particles, total_mass / n_particles, dtype=float)
+
+
+def _sample_cgm_beta_profile(
+    n_particles: int,
+    r_min_kpc: float,
+    r_max_kpc: float,
+    core_radius_kpc: float,
+    beta: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    if n_particles <= 0:
+        return np.empty((0, 3), dtype=float)
+    if r_min_kpc < 0 or r_max_kpc <= r_min_kpc:
+        raise ValueError("CGM radii must satisfy 0 <= r_min_kpc < r_max_kpc")
+    if core_radius_kpc <= 0:
+        raise ValueError("CGM core_radius_kpc must be positive")
+    if beta <= 0:
+        raise ValueError("CGM beta must be positive")
+
+    samples = []
+    max_batch = max(1024, n_particles)
+    while sum(len(batch) for batch in samples) < n_particles:
+        radius = (
+            rng.uniform(r_min_kpc**3, r_max_kpc**3, max_batch)
+        ) ** (1.0 / 3.0)
+        # Sample from volume and reject by the beta profile density term.
+        density = (1.0 + (radius / core_radius_kpc) ** 2) ** (-1.5 * beta)
+        density_max = (1.0 + (r_min_kpc / core_radius_kpc) ** 2) ** (-1.5 * beta)
+        accept_prob = density / density_max
+        draw = rng.uniform(0.0, 1.0, max_batch)
+        accepted_radius = radius[draw < accept_prob]
+        if accepted_radius.size == 0:
+            continue
+        cos_theta = rng.uniform(-1.0, 1.0, accepted_radius.size)
+        sin_theta = np.sqrt(1.0 - cos_theta**2)
+        phi = rng.uniform(0.0, 2.0 * np.pi, accepted_radius.size)
+        samples.append(np.column_stack([
+            accepted_radius * sin_theta * np.cos(phi),
+            accepted_radius * sin_theta * np.sin(phi),
+            accepted_radius * cos_theta,
+        ]))
+
+    return np.vstack(samples)[:n_particles]
 
 
 def _sample_cylindrical_halo_velocities(
@@ -552,10 +732,34 @@ def _rotate_x(values: np.ndarray, angle_deg: float) -> np.ndarray:
     return out
 
 
-def _place_galaxy(galaxy_data: dict, offset: np.ndarray, bulk_velocity: np.ndarray, inclination: float):
+def _rotate_z(values: np.ndarray, angle_deg: float) -> np.ndarray:
+    if len(values) == 0 or angle_deg == 0.0:
+        return values
+    angle = np.deg2rad(angle_deg)
+    c = np.cos(angle)
+    s = np.sin(angle)
+    out = values.copy()
+    x = values[:, 0]
+    y = values[:, 1]
+    out[:, 0] = c * x - s * y
+    out[:, 1] = s * x + c * y
+    return out
+
+
+def _rotate_disc_orientation(values: np.ndarray, inclination: float, node_angle: float) -> np.ndarray:
+    return _rotate_x(_rotate_z(values, node_angle), inclination)
+
+
+def _place_galaxy(
+    galaxy_data: dict,
+    offset: np.ndarray,
+    bulk_velocity: np.ndarray,
+    inclination: float,
+    node_angle: float,
+):
     for component in galaxy_data.values():
-        component["pos"] = _rotate_x(component["pos"], inclination) + offset
-        component["vel"] = _rotate_x(component["vel"], inclination) + bulk_velocity
+        component["pos"] = _rotate_disc_orientation(component["pos"], inclination, node_angle) + offset
+        component["vel"] = _rotate_disc_orientation(component["vel"], inclination, node_angle) + bulk_velocity
 
 
 def add_uniform_background(
@@ -588,9 +792,25 @@ def add_uniform_background(
     # Initialize updated dictionary with existing galaxy data, and ensure 'vel' key exists
     updated = {
         "dm": {"pos": initial_data["dm"]["pos"], "mass": initial_data["dm"]["mass"], "vel": initial_data["dm"]["vel"]},
-        "gas": {"pos": initial_data["gas"]["pos"], "mass": initial_data["gas"]["mass"], "vel": initial_data["gas"]["vel"]},
+        "gas": {
+            "pos": initial_data["gas"]["pos"],
+            "mass": initial_data["gas"]["mass"],
+            "vel": initial_data["gas"]["vel"],
+            "internal_energy": initial_data["gas"].get(
+                "internal_energy",
+                np.full(len(initial_data["gas"]["pos"]), compute_internal_energy(T=1e4)),
+            ),
+        },
         "stars": {"pos": initial_data["stars"]["pos"], "mass": initial_data["stars"]["mass"], "vel": initial_data["stars"]["vel"]},
         "bulge": {"pos": initial_data["bulge"]["pos"], "mass": initial_data["bulge"]["mass"], "vel": initial_data["bulge"]["vel"]},
+        "black_holes": {
+            "pos": initial_data["black_holes"]["pos"],
+            "mass": initial_data["black_holes"]["mass"],
+            "vel": initial_data["black_holes"]["vel"],
+            "subgrid_mass": initial_data["black_holes"].get(
+                "subgrid_mass", initial_data["black_holes"]["mass"]
+            ),
+        },
     }
 
     use_grid = grid_spacing > 0
@@ -662,10 +882,15 @@ def add_uniform_background(
                     pos_gas = pos_gas[:n_gas]
                 vel_gas = np.zeros((n_gas, 3), dtype=float)
                 mass_gas = np.full(n_gas, m_part)
+                internal_energy_gas = np.full(n_gas, compute_internal_energy(T=1e4), dtype=float)
 
                 updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], pos_gas])
                 updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
                 updated["gas"]["mass"] = np.concatenate([updated["gas"]["mass"], mass_gas])
+                updated["gas"]["internal_energy"] = np.concatenate([
+                    updated["gas"]["internal_energy"],
+                    internal_energy_gas,
+                ])
                 region_label = f", r<={radius:.1f} kpc" if radius is not None else ""
                 print(f"  Added uniform gas background (random): N={n_gas}, rho={rho_gas:.3e} Msun/kpc^3{region_label}")
 
@@ -689,10 +914,15 @@ def add_uniform_background(
                 m_gas_bg = (rho_gas * target_volume) / n_grid
                 vel_gas = np.zeros((n_grid, 3), dtype=float)
                 mass_gas = np.full(n_grid, m_gas_bg)
+                internal_energy_gas = np.full(n_grid, compute_internal_energy(T=1e4), dtype=float)
 
                 updated["gas"]["pos"] = np.vstack([updated["gas"]["pos"], gas_grid])
                 updated["gas"]["vel"] = np.vstack([updated["gas"]["vel"], vel_gas])
                 updated["gas"]["mass"] = np.concatenate([updated["gas"]["mass"], mass_gas])
+                updated["gas"]["internal_energy"] = np.concatenate([
+                    updated["gas"]["internal_energy"],
+                    internal_energy_gas,
+                ])
                 region_label = f", r<={radius:.1f} kpc" if radius is not None else ""
                 print(f"  Added grid gas background: spacing={grid_spacing} kpc, N={n_grid}, m={m_gas_bg:.2e} Msun{region_label}")
 
@@ -810,6 +1040,9 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
     _set_if_present(args, "orbit", orbit, "type")
     _set_if_present(args, "orbit_r_init_kpc", orbit, "r_init_kpc")
     _set_if_present(args, "orbit_r_peri_kpc", orbit, "r_peri_kpc")
+    _set_if_present(args, "orbit_separation_kpc", orbit, "separation_kpc")
+    _set_if_present(args, "orbit_radial_velocity_kms", orbit, "radial_velocity_kms")
+    _set_if_present(args, "orbit_tangential_velocity_kms", orbit, "tangential_velocity_kms")
     _set_if_present(args, "orbit_plane_angle_deg", orbit, "plane_angle_deg")
 
     grid = config.get("grid", {})
@@ -847,6 +1080,7 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
         "gas_disk_scale_length_kpc": ("gas_disk", "scale_length_kpc"),
         "gas_disk_scale_height_kpc": ("gas_disk", "scale_height_kpc"),
         "Q_gas": ("gas_disk", "Q"),
+        "black_hole_mass_msun": ("black_hole", "mass_msun"),
         "n_arms": ("spiral", "n_arms"),
         "pitch_deg": ("spiral", "pitch_deg"),
         "arm_strength": ("spiral", "strength"),
@@ -856,6 +1090,14 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
         "bar_q": ("bar", "q"),
         "bar_angle": ("bar", "angle_deg"),
         "inclination_deg": ("placement", "inclination_deg"),
+        "node_angle_deg": ("placement", "node_angle_deg"),
+        "cgm_enabled": ("cgm", "enabled"),
+        "cgm_mass_msun": ("cgm", "mass_msun"),
+        "cgm_r_min_kpc": ("cgm", "r_min_kpc"),
+        "cgm_r_max_kpc": ("cgm", "r_max_kpc"),
+        "cgm_core_radius_kpc": ("cgm", "core_radius_kpc"),
+        "cgm_beta": ("cgm", "beta"),
+        "cgm_temperature_K": ("cgm", "temperature_K"),
     }
     for attr, path in galaxy_mappings.items():
         values = _collect_galaxy_values(galaxies, path)
@@ -889,6 +1131,7 @@ def _default_generator_args() -> argparse.Namespace:
         gas_part_mass_msun=None,
         n_galaxies=1,
         inclination_deg=None,
+        node_angle_deg=None,
         xs=None,
         ys=None,
         zs=None,
@@ -898,6 +1141,9 @@ def _default_generator_args() -> argparse.Namespace:
         orbit="manual",
         orbit_r_init_kpc=None,
         orbit_r_peri_kpc=None,
+        orbit_separation_kpc=None,
+        orbit_radial_velocity_kms=None,
+        orbit_tangential_velocity_kms=None,
         orbit_plane_angle_deg=0.0,
         c200=[10.0],
         bulge_a_kpc=[0.8],
@@ -908,6 +1154,14 @@ def _default_generator_args() -> argparse.Namespace:
         gas_disk_scale_length_kpc=[7.0],
         gas_disk_scale_height_kpc=[0.1],
         Q_gas=[1.0],
+        black_hole_mass_msun=[0.0],
+        cgm_enabled=[False],
+        cgm_mass_msun=[0.0],
+        cgm_r_min_kpc=[20.0],
+        cgm_r_max_kpc=[250.0],
+        cgm_core_radius_kpc=[3.0],
+        cgm_beta=[0.5],
+        cgm_temperature_K=[1.0e6],
         n_arms=[2],
         pitch_deg=[15.0],
         arm_strength=[0.3],
@@ -961,7 +1215,13 @@ def main():
     for i in range(args.n_galaxies):
         print(f"Generating positions for galaxy {i}...")
         galaxy_data = generate_galaxy_particles(i, args, rng)
-        _place_galaxy(galaxy_data, galaxy_offsets[i], galaxy_bulk_velocities[i], args.inclination_deg[i])
+        _place_galaxy(
+            galaxy_data,
+            galaxy_offsets[i],
+            galaxy_bulk_velocities[i],
+            args.inclination_deg[i],
+            args.node_angle_deg[i],
+        )
 
         all_galaxies_pos_mass.append(galaxy_data)
 
@@ -972,13 +1232,24 @@ def main():
                "mass": np.concatenate([g["dm"]["mass"] for g in all_galaxies_pos_mass])},
         "gas": {"pos": np.vstack([g["gas"]["pos"] for g in all_galaxies_pos_mass]),
                 "vel": np.vstack([g["gas"]["vel"] for g in all_galaxies_pos_mass]),
-                "mass": np.concatenate([g["gas"]["mass"] for g in all_galaxies_pos_mass])},
+                "mass": np.concatenate([g["gas"]["mass"] for g in all_galaxies_pos_mass]),
+                "internal_energy": np.concatenate([
+                    g["gas"]["internal_energy"] for g in all_galaxies_pos_mass
+                ])},
         "stars": {"pos": np.vstack([g["stars"]["pos"] for g in all_galaxies_pos_mass]),
                   "vel": np.vstack([g["stars"]["vel"] for g in all_galaxies_pos_mass]),
                   "mass": np.concatenate([g["stars"]["mass"] for g in all_galaxies_pos_mass])},
         "bulge": {"pos": np.vstack([g["bulge"]["pos"] for g in all_galaxies_pos_mass]),
                   "vel": np.vstack([g["bulge"]["vel"] for g in all_galaxies_pos_mass]),
                   "mass": np.concatenate([g["bulge"]["mass"] for g in all_galaxies_pos_mass])},
+        "black_holes": {
+            "pos": np.vstack([g["black_holes"]["pos"] for g in all_galaxies_pos_mass]),
+            "vel": np.vstack([g["black_holes"]["vel"] for g in all_galaxies_pos_mass]),
+            "mass": np.concatenate([g["black_holes"]["mass"] for g in all_galaxies_pos_mass]),
+            "subgrid_mass": np.concatenate([
+                g["black_holes"]["subgrid_mass"] for g in all_galaxies_pos_mass
+            ]),
+        },
     }
 
     # Add uniform background particles if specified
