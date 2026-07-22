@@ -173,10 +173,12 @@ When using either orbit mode, do not also provide manual positions or velocities
 
 ### Spiral Structure
 
+Spiral perturbations are applied only to gas discs. Collisionless stellar discs are kept axisymmetric because imposed stellar spiral overdensities are not equilibrium ICs without a matching non-axisymmetric potential.
+
 - `galaxies[].spiral.n_arms`: number of spiral arms
 - `galaxies[].spiral.pitch_deg`: spiral pitch angle
 - `galaxies[].spiral.strength`: spiral perturbation strength
-- `galaxies[].spiral.stream_frac`: streaming fraction applied in the spiral perturbation
+- `galaxies[].spiral.stream_frac`: gas streaming fraction applied in the spiral perturbation
 
 ### Bar Structure
 

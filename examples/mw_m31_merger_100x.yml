@@ -144,7 +144,8 @@ galaxies:
       temperature_floor_K: 1.0e5
       temperature_ceiling_K: 3.0e6
     spiral:
-      # Mild spiral perturbation. Keep stream_frac small for a stable initial test.
+      # Mild gas spiral perturbation. Stellar discs are kept axisymmetric for
+      # stable collisionless ICs until a matching spiral potential is implemented.
       n_arms: 2
       pitch_deg: 15
       strength: 0.15

@@ -479,18 +479,11 @@ def generate_galaxy_particles(
     if n_star > 0:
         x_star, y_star, z_star = sample_exponential_disc(
             n_star, M_star, rd_star_kpc, zd_star_kpc, rng,
-            spiral_params={
-                "arm_strength": arm_strength,
-                "n_arms": n_arms,
-                "pitch_deg": pitch_deg,
-            } if arm_strength > 0 else None,
-            bar_params={
-                "enabled": args.bar_enabled,
-                "strength": bar_strength,
-                "radius": bar_radius,
-                "q": bar_q,
-                "angle": bar_angle,
-            } if args.bar_enabled else None,
+            # Keep collisionless stellar discs axisymmetric. Imposed stellar
+            # spiral/bar overdensities are not paired with a matching live
+            # non-axisymmetric potential, so they are not equilibrium ICs.
+            spiral_params=None,
+            bar_params=None,
         )
         pos_star = np.column_stack([x_star, y_star, z_star])
 
@@ -563,18 +556,8 @@ def generate_galaxy_particles(
         rng,
         grid_solver,
         is_gas=False,
-        spiral_params={
-            "arm_strength": arm_strength,
-            "stream_frac": _get_galaxy_value(args.arm_stream_frac, galaxy_id),
-            "n_arms": n_arms,
-            "pitch_deg": pitch_deg,
-        } if arm_strength > 0 else None,
-        bar_params={
-            "enabled": args.bar_enabled,
-            "stream_frac": bar_strength,
-            "radius": bar_radius,
-            "angle": bar_angle,
-        } if args.bar_enabled else None,
+        spiral_params=None,
+        bar_params=None,
     )
     vel_gas = _sample_cylindrical_disc_velocities(
         pos_gas,

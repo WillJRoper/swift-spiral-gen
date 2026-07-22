@@ -219,6 +219,37 @@ class TestFullPipeline:
 
         assert np.median(thick) > np.median(thin)
 
+    def test_stellar_disc_ignores_unsupported_spiral_overdensity(self, monkeypatch):
+        """Stellar spirals are not imposed without a matching non-axisymmetric potential."""
+
+        import swift_spiral_ics.cli.generate as generate_module
+
+        seen_spiral_params = []
+        original_sampler = generate_module.sample_exponential_disc
+
+        def wrapped_sampler(*args, **kwargs):
+            seen_spiral_params.append(kwargs.get("spiral_params"))
+            return original_sampler(*args, **kwargs)
+
+        monkeypatch.setattr(generate_module, "sample_exponential_disc", wrapped_sampler)
+
+        args = _default_generator_args()
+        args.n_halo = [2]
+        args.n_bulge = [0]
+        args.n_star = [2]
+        args.n_gas = [2]
+        args.nR_grid = 16
+        args.nz_grid = 16
+        args.box_kpc = 100.0
+        args.arm_strength = [0.5]
+        args.arm_stream_frac = [0.2]
+        _normalise_per_galaxy_args(args)
+
+        generate_module.generate_galaxy_particles(0, args, get_rng(1))
+
+        assert seen_spiral_params[0] is None
+        assert seen_spiral_params[1] is not None
+
     def test_multi_galaxy_positions_are_literal_box_coordinates(self):
         """Per-galaxy YAML positions are interpreted as literal coordinates in the box."""
         with tempfile.TemporaryDirectory() as tmpdir:

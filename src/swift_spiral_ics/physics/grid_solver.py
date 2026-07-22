@@ -236,8 +236,11 @@ class GalaxyGridSolver:
             gas_dispersion_from_temperature,
         )
 
-        # Define a radial grid for solving
-        R_unique = np.linspace(1e-3, 30, 1000) # Increased resolution
+        # Define a radial grid for solving. Cover the requested particle radii
+        # instead of using a fixed 30 kpc edge, otherwise outer-disc particles all
+        # inherit the same extrapolated kinematics.
+        max_radius = max(30.0, 8.0 * R_d, float(np.max(R_query)) * 1.1 if len(R_query) else 30.0)
+        R_unique = np.linspace(1e-3, max_radius, 1000)
 
         # 1. Get v_c from Grid Potential Total Force
         res = self.get_potential_and_forces(R_unique, np.zeros_like(R_unique))
@@ -249,10 +252,10 @@ class GalaxyGridSolver:
         # 2. Get Kappa from v_c_profile
         kappa_profile = epicyclic_frequency(R_unique, v_c_profile)
 
-        # 3. Calculate Surface Density Sigma(R) for THIS component
-        Sigma_comp_prof = self.get_component_density_profile(
-            R_unique, pos_comp, mass_comp, profile_type="cylindrical"
-        )
+        # 3. Calculate the target smooth surface density for this disc. Using a
+        # binned particle estimate here feeds Poisson noise into asymmetric drift
+        # and can launch coherent stellar rings/bands at startup.
+        Sigma_comp_prof = M_disc / (2.0 * np.pi * R_d**2) * np.exp(-R_unique / R_d)
 
         # 4. Calculate sigma_R
         if is_gas:
@@ -276,6 +279,10 @@ class GalaxyGridSolver:
             sigma_z_prof = sigma_R_prof
         else:
             sigma_phi_prof, sigma_z_prof = disc_velocity_dispersions(R_unique, sigma_R_prof)
+            z_support = np.full_like(R_unique, max(z_d, self.eps))
+            support_force = np.abs(self.get_potential_and_forces(R_unique, z_support)["FZ"])
+            sigma_z_support = np.sqrt(np.maximum(z_d * support_force, 0.0))
+            sigma_z_prof = np.maximum(sigma_z_prof, sigma_z_support)
 
         # 6. Asymmetric Drift (v_phi_mean)
         # v_phi^2 = v_c^2 + sigma_R^2 * [ R * (dlnSigma/dR + dlnSigma_R^2/dR) + (1 - sigma_phi^2/sigma_R^2) ]
