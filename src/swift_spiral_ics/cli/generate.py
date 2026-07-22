@@ -12,7 +12,7 @@ from ..io.swift_writer import compute_internal_energy, write_swift_ic
 from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
 from ..physics.orbits import parabolic_orbit_initial_conditions
-from ..physics.profiles import exponential_disc_mass, hernquist_mass, nfw_mass, nfw_params
+from ..physics.profiles import nfw_params
 from ..physics.sampling import (
     sample_bulge_velocities,
     sample_disc_velocities,
@@ -600,7 +600,7 @@ def generate_galaxy_particles(
         } if args.bar_enabled else None,
     )
 
-    internal_energy_gas = np.full(len(pos_gas), compute_internal_energy(T=1e4), dtype=float)
+    internal_energy_gas = _hydrostatic_disc_internal_energy(pos_gas, zd_gas_kpc, grid_solver)
     if _get_galaxy_value(args.cgm_enabled, galaxy_id):
         cgm_mass_msun = _get_galaxy_value(args.cgm_mass_msun, galaxy_id)
         if cgm_mass_msun > 0.0:
@@ -618,18 +618,11 @@ def generate_galaxy_particles(
             radius_cgm = np.linalg.norm(pos_cgm, axis=1)
             internal_energy_cgm = _hydrostatic_cgm_internal_energy(
                 radius_cgm,
+                _get_galaxy_value(args.cgm_r_min_kpc, galaxy_id),
                 _get_galaxy_value(args.cgm_r_max_kpc, galaxy_id),
                 _get_galaxy_value(args.cgm_core_radius_kpc, galaxy_id),
                 _get_galaxy_value(args.cgm_beta, galaxy_id),
-                m200_msun,
-                c200,
-                m_bulge_msun,
-                bulge_a_kpc,
-                M_star,
-                rd_star_kpc,
-                M_gas,
-                rd_gas_kpc,
-                m_black_hole_msun,
+                grid_solver,
                 _get_galaxy_value(args.cgm_temperature_floor_K, galaxy_id),
                 _get_galaxy_value(args.cgm_temperature_ceiling_K, galaxy_id),
             )
@@ -704,9 +697,12 @@ def _sample_cgm_beta_profile(
         radius = (
             rng.uniform(r_min_kpc**3, r_max_kpc**3, max_batch)
         ) ** (1.0 / 3.0)
-        # Sample from volume and reject by the beta profile density term.
-        density = (1.0 + (radius / core_radius_kpc) ** 2) ** (-1.5 * beta)
-        density_max = (1.0 + (r_min_kpc / core_radius_kpc) ** 2) ** (-1.5 * beta)
+        # Sample from volume and reject by the tapered beta-profile density term.
+        density = _cgm_density_shape(radius, core_radius_kpc, beta, r_min_kpc, r_max_kpc)
+        probe_radius = np.linspace(r_min_kpc, r_max_kpc, 512)
+        density_max = float(np.max(_cgm_density_shape(
+            probe_radius, core_radius_kpc, beta, r_min_kpc, r_max_kpc
+        )))
         accept_prob = density / density_max
         draw = rng.uniform(0.0, 1.0, max_batch)
         accepted_radius = radius[draw < accept_prob]
@@ -724,24 +720,65 @@ def _sample_cgm_beta_profile(
     return np.vstack(samples)[:n_particles]
 
 
-def _cgm_density_shape(radius: np.ndarray, core_radius_kpc: float, beta: float) -> np.ndarray:
-    return (1.0 + (radius / core_radius_kpc) ** 2) ** (-1.5 * beta)
+def _smoothstep(x: np.ndarray) -> np.ndarray:
+    x_clipped = np.clip(x, 0.0, 1.0)
+    return x_clipped * x_clipped * (3.0 - 2.0 * x_clipped)
+
+
+def _cgm_radial_taper(radius: np.ndarray, r_min_kpc: float, r_max_kpc: float) -> np.ndarray:
+    span = r_max_kpc - r_min_kpc
+    taper_width = max(0.05 * span, 5.0)
+    taper_width = min(taper_width, 0.45 * span)
+    inner = _smoothstep((radius - r_min_kpc) / taper_width)
+    outer = _smoothstep((r_max_kpc - radius) / taper_width)
+    return inner * outer
+
+
+def _cgm_density_shape(
+    radius: np.ndarray,
+    core_radius_kpc: float,
+    beta: float,
+    r_min_kpc: float | None = None,
+    r_max_kpc: float | None = None,
+) -> np.ndarray:
+    density = (1.0 + (radius / core_radius_kpc) ** 2) ** (-1.5 * beta)
+    if r_min_kpc is not None and r_max_kpc is not None:
+        density = density * _cgm_radial_taper(radius, r_min_kpc, r_max_kpc)
+    return density
+
+
+def _hydrostatic_disc_internal_energy(
+    pos: np.ndarray,
+    scale_height_kpc: float,
+    grid_solver: GalaxyGridSolver,
+) -> np.ndarray:
+    """Estimate gas disc internal energy from vertical hydrostatic support."""
+
+    if len(pos) == 0:
+        return np.empty(0, dtype=float)
+    if scale_height_kpc <= 0.0:
+        raise ValueError("gas_disk.scale_height_kpc must be positive")
+
+    radius = np.sqrt(pos[:, 0] ** 2 + pos[:, 1] ** 2)
+    z_support = np.full_like(radius, max(scale_height_kpc, grid_solver.eps))
+    support_force = np.abs(grid_solver.get_potential_and_forces(radius, z_support)["FZ"])
+
+    # For an isothermal vertical layer, P/rho ~= H |dPhi/dz|. The SWIFT internal
+    # energy is related by P/rho = (gamma - 1) u.
+    gamma = 5.0 / 3.0
+    sigma_sq = np.maximum(scale_height_kpc * support_force, 0.0)
+    floor_u = compute_internal_energy(T=1.0e4)
+    ceiling_u = compute_internal_energy(T=3.0e5)
+    return np.clip(sigma_sq / (gamma - 1.0), floor_u, ceiling_u)
 
 
 def _hydrostatic_cgm_internal_energy(
     radius: np.ndarray,
+    r_min_kpc: float,
     r_max_kpc: float,
     core_radius_kpc: float,
     beta: float,
-    m200_msun: float,
-    c200: float,
-    m_bulge_msun: float,
-    bulge_a_kpc: float,
-    m_star_msun: float,
-    stellar_scale_length_kpc: float,
-    m_gas_msun: float,
-    gas_scale_length_kpc: float,
-    m_black_hole_msun: float,
+    grid_solver: GalaxyGridSolver,
     temperature_floor_K: float,
     temperature_ceiling_K: float,
 ) -> np.ndarray:
@@ -751,18 +788,9 @@ def _hydrostatic_cgm_internal_energy(
         raise ValueError("CGM temperature_ceiling_K must be >= temperature_floor_K")
 
     gamma = 5.0 / 3.0
-    r_min_grid = max(1.0e-3, float(np.min(radius)) * 0.5)
-    r_grid = np.geomspace(r_min_grid, r_max_kpc, 2048)
-    r_s, _ = nfw_params(m200_msun, c200)
-    m_enclosed = (
-        nfw_mass(r_grid, m200_msun, c200, r_s)
-        + hernquist_mass(r_grid, m_bulge_msun, bulge_a_kpc)
-        + exponential_disc_mass(r_grid, m_star_msun, stellar_scale_length_kpc)
-        + exponential_disc_mass(r_grid, m_gas_msun, gas_scale_length_kpc)
-        + m_black_hole_msun
-    )
-    density = _cgm_density_shape(r_grid, core_radius_kpc, beta)
-    gravity = G_KPC_KMS2_MSUN * m_enclosed / np.maximum(r_grid, 1.0e-6) ** 2
+    r_grid = np.linspace(r_min_kpc, r_max_kpc, 4096)
+    density = _cgm_density_shape(r_grid, core_radius_kpc, beta, r_min_kpc, r_max_kpc)
+    gravity = np.abs(grid_solver.get_potential_and_forces(r_grid, np.zeros_like(r_grid))["FR"])
     integrand = density * gravity
 
     dr = np.diff(r_grid)
@@ -772,14 +800,48 @@ def _hydrostatic_cgm_internal_energy(
 
     boundary_internal_energy = compute_internal_energy(T=temperature_floor_K)
     boundary_sigma2 = (gamma - 1.0) * boundary_internal_energy
-    boundary_pressure = density[-1] * boundary_sigma2
+    boundary_pressure = max(float(np.max(density)) * 1.0e-6, density[-1]) * boundary_sigma2
     sigma2_grid = (boundary_pressure + pressure_integral) / np.maximum(density, 1.0e-300)
     internal_energy_grid = sigma2_grid / (gamma - 1.0)
 
     floor_u = compute_internal_energy(T=temperature_floor_K)
     ceiling_u = compute_internal_energy(T=temperature_ceiling_K)
-    internal_energy = np.interp(radius, r_grid, internal_energy_grid)
-    return np.clip(internal_energy, floor_u, ceiling_u)
+    clipped_energy_grid = np.clip(internal_energy_grid, floor_u, ceiling_u)
+    _validate_cgm_hydrostatic_residual(
+        r_grid, density, gravity, clipped_energy_grid, floor_u, ceiling_u, internal_energy_grid
+    )
+    return np.interp(radius, r_grid, clipped_energy_grid)
+
+
+def _validate_cgm_hydrostatic_residual(
+    radius: np.ndarray,
+    density: np.ndarray,
+    gravity: np.ndarray,
+    internal_energy: np.ndarray,
+    floor_u: float,
+    ceiling_u: float,
+    unclipped_internal_energy: np.ndarray,
+) -> None:
+    gamma = 5.0 / 3.0
+    pressure = density * (gamma - 1.0) * internal_energy
+    dpressure_dr = np.gradient(pressure, radius)
+    force_density = density * gravity
+    taper_mask = density > 0.1 * np.max(density)
+    valid = taper_mask & (force_density > 0.0)
+    if not np.any(valid):
+        raise ValueError("CGM hydrostatic validation failed: no supported CGM region")
+
+    residual = np.abs(dpressure_dr[valid] + force_density[valid]) / force_density[valid]
+    median_residual = float(np.median(residual))
+    ceiling_clip_fraction = float(np.mean(unclipped_internal_energy[valid] > ceiling_u))
+    if median_residual > 0.5 or ceiling_clip_fraction > 0.25:
+        raise ValueError(
+            "CGM is not hydrostatic for this configuration: "
+            f"median residual={median_residual:.2f}, "
+            f"ceiling-clipped fraction={ceiling_clip_fraction:.2f}. "
+            "Increase cgm.temperature_ceiling_K, decrease the CGM edge sharpness by widening "
+            "r_max_kpc-r_min_kpc, or reduce the CGM mass/inner density."
+        )
 
 
 def _sample_cylindrical_halo_velocities(

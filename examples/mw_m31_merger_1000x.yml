@@ -10,10 +10,11 @@
 # than the MW, explicit central SMBHs, and a low-density background medium.
 #
 # Remaining idealizations are explicit: isolated NFW+Hernquist+exponential-disc
-# galaxies, no LMC/M33/satellites, no cosmological environment, no structured CGM,
-# and only a single inclination angle per disc rather than full observed sky
-# orientation. All lengths are in kpc, velocities in km/s, masses in Msun, and
-# times in Gyr or Myr as indicated by the key names.
+# galaxies, LMC/SMC analogues but no M33 or broader satellite population, no
+# cosmological environment, an idealized hot CGM, and only a single inclination
+# angle per disc rather than full observed sky orientation. All lengths are in
+# kpc, velocities in km/s, masses in Msun, and times in Gyr or Myr as indicated
+# by the key names.
 
 output:
   # Initial-condition HDF5 file and SWIFT parameter YAML written by the generator.
@@ -44,7 +45,9 @@ simulation:
   # 25 Myr cadence gives ~480 snapshots over 12 Gyr. Use 10 Myr only for shorter
   # diagnostic runs; otherwise output volume becomes unnecessarily large.
   snapshot_dt_myr: 25.0
-  feedback_scale: 1.0
+  # Lower than the EAGLE default for the first relaxation runs. These idealized
+  # discs are not pre-relaxed, so full feedback can amplify initial transients.
+  feedback_scale: 0.3
 
 particle_masses:
   # 1000x finer than mw_m31_merger.yml. This gives baryonic particles of 10^3 Msun
@@ -119,9 +122,10 @@ galaxies:
       scale_height_kpc: 0.3
       Q: 2.0
     gas_disk:
-      # Gas disc is more extended and thinner than the stellar disc.
+      # Gas disc is more extended than the stellar disc. Keep it moderately thick
+      # for unrelaxed ICs; very thin cold gas discs puff up violently at startup.
       scale_length_kpc: 5.5
-      scale_height_kpc: 0.1
+      scale_height_kpc: 0.25
       Q: 1.5
     black_hole:
       # Sgr A* central SMBH. This writes an explicit PartType5 particle at the
@@ -133,13 +137,13 @@ galaxies:
       # transients in unrelaxed EAGLE runs. This is a conservative extended halo
       # intended to avoid vacuum boundaries without over-pressurising the disc.
       enabled: true
-      mass_msun: 1.5e10
-      r_min_kpc: 60
-      r_max_kpc: 300
-      core_radius_kpc: 60
-      beta: 0.45
+      mass_msun: 1.0e10
+      r_min_kpc: 90
+      r_max_kpc: 350
+      core_radius_kpc: 100
+      beta: 0.35
       temperature_floor_K: 1.0e5
-      temperature_ceiling_K: 1.5e6
+      temperature_ceiling_K: 3.0e6
     spiral:
       # Mild spiral perturbation. Keep stream_frac small for a stable initial test.
       n_arms: 2
@@ -173,7 +177,7 @@ galaxies:
       Q: 2.0
     gas_disk:
       scale_length_kpc: 8.0
-      scale_height_kpc: 0.15
+      scale_height_kpc: 0.3
       Q: 1.5
     black_hole:
       # M31's central SMBH is much more massive than Sgr A*.
@@ -184,13 +188,13 @@ galaxies:
       # The inner edge is kept outside the bright disc to avoid early blast-like
       # pressure transients.
       enabled: true
-      mass_msun: 2.5e10
-      r_min_kpc: 70
-      r_max_kpc: 350
-      core_radius_kpc: 70
-      beta: 0.45
+      mass_msun: 1.5e10
+      r_min_kpc: 100
+      r_max_kpc: 400
+      core_radius_kpc: 120
+      beta: 0.35
       temperature_floor_K: 1.0e5
-      temperature_ceiling_K: 1.5e6
+      temperature_ceiling_K: 3.0e6
     spiral:
       n_arms: 2
       pitch_deg: 15
@@ -223,7 +227,7 @@ galaxies:
       Q: 2.0
     gas_disk:
       scale_length_kpc: 2.5
-      scale_height_kpc: 0.2
+      scale_height_kpc: 0.3
       Q: 1.5
     black_hole:
       mass_msun: 0.0
@@ -263,7 +267,7 @@ galaxies:
       Q: 2.0
     gas_disk:
       scale_length_kpc: 1.8
-      scale_height_kpc: 0.2
+      scale_height_kpc: 0.3
       Q: 1.5
     black_hole:
       mass_msun: 0.0

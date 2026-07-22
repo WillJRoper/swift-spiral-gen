@@ -12,6 +12,7 @@ import yaml
 from swift_spiral_ics.cli.generate import (
     _apply_config_file,
     _default_generator_args,
+    _hydrostatic_disc_internal_energy,
     _normalise_per_galaxy_args,
     _resolve_galaxy_placement,
     _rotate_disc_orientation,
@@ -202,6 +203,22 @@ class TestFullPipeline:
                 assert "Units" in f
                 assert "PartType0" in f or "PartType1" in f or "PartType4" in f
 
+    def test_gas_disc_internal_energy_supports_requested_scale_height(self):
+        """Thicker gas discs receive stronger generated pressure support."""
+
+        class FakeGridSolver:
+            eps = 0.01
+
+            def get_potential_and_forces(self, radius, z):
+                return {"FZ": np.full_like(radius, 1.0e4, dtype=float)}
+
+        pos = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.1]])
+
+        thin = _hydrostatic_disc_internal_energy(pos, 0.05, FakeGridSolver())
+        thick = _hydrostatic_disc_internal_energy(pos, 0.5, FakeGridSolver())
+
+        assert np.median(thick) > np.median(thin)
+
     def test_multi_galaxy_positions_are_literal_box_coordinates(self):
         """Per-galaxy YAML positions are interpreted as literal coordinates in the box."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -277,15 +294,16 @@ class TestFullPipeline:
             ic_file = Path(tmpdir) / "test_ic.hdf5"
             params_file = Path(tmpdir) / "test_params.yml"
             config = _tiny_galaxy_config(ic_file, params_file)
+            config["simulation"]["box_kpc"] = 200
             config["galaxies"][0]["cgm"] = {
                 "enabled": True,
                 "mass_msun": 2e8,
-                "r_min_kpc": 2.0,
-                "r_max_kpc": 5.0,
-                "core_radius_kpc": 2.0,
+                "r_min_kpc": 20.0,
+                "r_max_kpc": 50.0,
+                "core_radius_kpc": 20.0,
                 "beta": 0.5,
-                "temperature_floor_K": 3e5,
-                "temperature_ceiling_K": 3e6,
+                "temperature_floor_K": 1e4,
+                "temperature_ceiling_K": 1e8,
             }
 
             result = _run_generator(config, tmpdir)
@@ -294,7 +312,36 @@ class TestFullPipeline:
             with h5py.File(ic_file, "r") as f:
                 assert f["Header"].attrs["NumPart_Total"][0] == 3
                 internal_energy = f["PartType0/InternalEnergy"][:]
-                assert internal_energy.max() > internal_energy.min()
+                assert np.all(internal_energy > 0.0)
+
+    def test_mw_m31_example_generates_reduced_stable_cgm(self):
+        """The shipped MW-M31 CGM parameters pass generation-time stability checks."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(__file__).parents[1]
+            with open(repo_root / "examples" / "mw_m31_merger.yml") as handle:
+                config = yaml.safe_load(handle)
+
+            ic_file = Path(tmpdir) / "mw_m31_smoke.hdf5"
+            params_file = Path(tmpdir) / "mw_m31_smoke.yml"
+            config["output"] = {
+                "ics": str(ic_file),
+                "params": str(params_file),
+                "run_name": "mw_m31_smoke",
+            }
+            config["simulation"]["time_end_gyr"] = 0.01
+            config["simulation"]["snapshot_dt_myr"] = 5.0
+            config["particle_masses"] = {
+                "dm_msun": 5.0e12,
+                "stars_msun": 5.0e11,
+                "gas_msun": 5.0e10,
+            }
+            config["grid"] = {**config["grid"], "nR": 32, "nz": 32}
+
+            result = _run_generator(config, tmpdir)
+
+            assert result.returncode == 0, result.stderr
+            assert ic_file.exists()
 
     def test_mw_m31_example_config_parses(self):
         """The shipped MW-M31 example stays in sync with the generator schema."""

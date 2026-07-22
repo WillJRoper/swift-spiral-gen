@@ -256,15 +256,26 @@ class GalaxyGridSolver:
 
         # 4. Calculate sigma_R
         if is_gas:
-            T_gas = 1e4 # A typical temperature for ISM
-            sigma_R_prof = np.full_like(R_unique, gas_dispersion_from_temperature(T_gas))
+            # Use the vertical restoring force to set the gas pressure support for
+            # the requested scale height. A fixed 1e4 K floor under-supports the
+            # sampled disc and causes immediate vertical relaxation transients.
+            z_support = np.full_like(R_unique, max(z_d, self.eps))
+            support_force = np.abs(self.get_potential_and_forces(R_unique, z_support)["FZ"])
+            sigma_R_prof = np.sqrt(np.maximum(z_d * support_force, 0.0))
+            sigma_floor = gas_dispersion_from_temperature(1.0e4)
+            sigma_ceiling = gas_dispersion_from_temperature(3.0e5)
+            sigma_R_prof = np.clip(sigma_R_prof, sigma_floor, sigma_ceiling)
         else:
             # Toomre Q based: sigma_R = Q * pi * G * Sigma / kappa
             sigma_R_prof = Q_target * np.pi * G.value * Sigma_comp_prof / kappa_profile
             sigma_R_prof = np.maximum(sigma_R_prof, 5.0) # Floor dispersion
 
         # 5. Calculate sigma_phi, sigma_z
-        sigma_phi_prof, sigma_z_prof = disc_velocity_dispersions(R_unique, sigma_R_prof)
+        if is_gas:
+            sigma_phi_prof = sigma_R_prof
+            sigma_z_prof = sigma_R_prof
+        else:
+            sigma_phi_prof, sigma_z_prof = disc_velocity_dispersions(R_unique, sigma_R_prof)
 
         # 6. Asymmetric Drift (v_phi_mean)
         # v_phi^2 = v_c^2 + sigma_R^2 * [ R * (dlnSigma/dR + dlnSigma_R^2/dR) + (1 - sigma_phi^2/sigma_R^2) ]

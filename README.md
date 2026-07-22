@@ -146,6 +146,12 @@ Disk orientations are given by:
 
 `position_kpc` and `velocity_kms` are three-element vectors. If no velocity is provided, the galaxy receives zero bulk velocity.
 
+Additional galaxies can be placed relative to a named host galaxy when using `orbit.type: relative_velocity`:
+
+- `galaxies[].placement.relative_to`: host galaxy name
+- `galaxies[].placement.relative_position_kpc`: host-relative three-element offset
+- `galaxies[].placement.relative_velocity_kms`: host-relative three-element velocity
+
 Alternatively, for two-galaxy encounters, the generator can compute centre-of-mass positions and velocities from an orbit block.
 
 For observed-like MW-M31 analogues, use:
