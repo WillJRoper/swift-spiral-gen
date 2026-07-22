@@ -1,7 +1,7 @@
-# Low-resolution Milky Way-Andromeda-like merger test.
+# 100x-resolution Milky Way-Andromeda-like merger test.
 #
 # Run with:
-#   swift-spiral-ics examples/mw_m31_merger.yml
+#   swift-spiral-ics examples/mw_m31_merger_100x.yml
 #
 # This file is intended as a data-motivated MW-M31 future-merger analogue for the
 # idealized machinery in this repository. It uses commonly adopted present-day
@@ -17,9 +17,9 @@
 
 output:
   # Initial-condition HDF5 file and SWIFT parameter YAML written by the generator.
-  ics: mw_m31_merger.hdf5
-  params: mw_m31_merger.yml
-  run_name: mw_m31_merger
+  ics: mw_m31_merger_100x.hdf5
+  params: mw_m31_merger_100x.yml
+  run_name: mw_m31_merger_100x
   snapshot_basename: snapshot
 
 simulation:
@@ -47,13 +47,12 @@ simulation:
   feedback_scale: 1.0
 
 particle_masses:
-  # Keep the baryonic particle masses near 10^6 Msun for first tests.
-  # DM is coarser to avoid multi-million-particle halo-only debug runs. Setting
-  # dm_msun to 1.0e6 would produce roughly 2.5 million DM particles for the two
-  # halos alone.
-  dm_msun: 1.0e7
-  stars_msun: 1.0e6
-  gas_msun: 1.0e6
+  # 100x finer than mw_m31_merger.yml. This gives baryonic particles of 10^4 Msun
+  # and dark-matter particles of 10^5 Msun while keeping the same physical model.
+  # This is a very large run: the two DM halos alone contain ~26 million particles.
+  dm_msun: 1.0e5
+  stars_msun: 1.0e4
+  gas_msun: 1.0e4
 
 orbit:
   # Observed-like two-body setup. The generator places both galaxy centres in the

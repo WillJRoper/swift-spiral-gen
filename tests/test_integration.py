@@ -304,12 +304,38 @@ class TestFullPipeline:
         _normalise_per_galaxy_args(args)
         positions, velocities = _resolve_galaxy_placement(args)
 
-        assert args.n_galaxies == 2
+        assert args.n_galaxies == 4
+        assert args.galaxy_names == ["Milky Way", "Andromeda", "LMC", "SMC"]
         assert args.orbit == "relative_velocity"
-        assert args.black_hole_mass_msun == [4.3e6, 1.4e8]
+        assert args.black_hole_mass_msun == [4.3e6, 1.4e8, 0.0, 0.0]
         assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 780.0)
         assert np.allclose(velocities[1] - velocities[0], [-110.0, 17.0, 0.0])
+        assert np.allclose(positions[2] - positions[0], [-1.0, -41.0, -28.0])
+        assert np.allclose(positions[3] - positions[0], [15.0, -38.0, -44.0])
         assert np.all(np.isfinite(velocities))
+
+    def test_mw_m31_resolution_example_configs_parse(self):
+        """Resolution variants keep the same setup with finer particle masses."""
+        examples = {
+            "mw_m31_merger_10x.yml": (1.0e6, 1.0e5, 1.0e5),
+            "mw_m31_merger_100x.yml": (1.0e5, 1.0e4, 1.0e4),
+            "mw_m31_merger_1000x.yml": (1.0e4, 1.0e3, 1.0e3),
+        }
+
+        for filename, particle_masses in examples.items():
+            config_file = Path(__file__).parents[1] / "examples" / filename
+            args = _apply_config_file(_default_generator_args(), str(config_file))
+            _normalise_per_galaxy_args(args)
+            positions, velocities = _resolve_galaxy_placement(args)
+
+            assert (
+                args.dm_part_mass_msun,
+                args.star_part_mass_msun,
+                args.gas_part_mass_msun,
+            ) == particle_masses
+            assert args.orbit == "relative_velocity"
+            assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 780.0)
+            assert np.allclose(velocities[1] - velocities[0], [-110.0, 17.0, 0.0])
 
     def test_multi_galaxy_positions_must_lie_inside_box(self):
         """Out-of-box galaxy coordinates are rejected."""

@@ -38,6 +38,8 @@ _DEFAULT_BULGE_FRACTION = 1.0 / 6.0
 
 
 def _allocate_total_particles(total_mass: float, particle_mass: float, name: str) -> int:
+    if total_mass <= 0.0:
+        return 0
     if particle_mass <= 0:
         raise ValueError(f"{name} must be positive")
     return max(1, int(round(total_mass / particle_mass)))
@@ -273,9 +275,50 @@ def _rotate_orbit_plane(pos: np.ndarray, vel: np.ndarray, plane_angle_deg: float
     return rot_matrix @ pos, rot_matrix @ vel
 
 
+def _galaxy_index_by_name(args: argparse.Namespace, name: str) -> int:
+    try:
+        return args.galaxy_names.index(name)
+    except ValueError as exc:
+        raise ValueError(f"Unknown host galaxy '{name}' in relative placement") from exc
+
+
+def _apply_host_relative_placements(
+    args: argparse.Namespace,
+    positions: np.ndarray,
+    velocities: np.ndarray,
+    start_index: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    for i in range(start_index, args.n_galaxies):
+        host_name = args.relative_to[i]
+        rel_pos = args.relative_position_kpc[i]
+        rel_vel = args.relative_velocity_kms[i]
+        if host_name is None or rel_pos is None or rel_vel is None:
+            raise ValueError(
+                "Additional galaxies with orbit.type relative_velocity must specify "
+                "placement.relative_to, placement.relative_position_kpc, and "
+                "placement.relative_velocity_kms"
+            )
+        host_index = _galaxy_index_by_name(args, host_name)
+        if host_index >= i:
+            raise ValueError("Host-relative galaxies must appear after their host in the YAML file")
+        positions[i] = positions[host_index] + np.asarray(rel_pos, dtype=float)
+        velocities[i] = velocities[host_index] + np.asarray(rel_vel, dtype=float)
+    return positions, velocities
+
+
+def _center_all_galaxies_on_com(
+    masses: np.ndarray,
+    positions: np.ndarray,
+    velocities: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    positions = positions - np.average(positions, axis=0, weights=masses)
+    velocities = velocities - np.average(velocities, axis=0, weights=masses)
+    return positions, velocities
+
+
 def _resolve_relative_velocity_orbit_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
-    if args.n_galaxies != 2:
-        raise ValueError("orbit.type relative_velocity currently requires exactly two galaxies")
+    if args.n_galaxies < 2:
+        raise ValueError("orbit.type relative_velocity requires at least two galaxies")
 
     manual_position_args = (args.xs, args.ys, args.zs)
     manual_velocity_args = (args.vxs, args.vys, args.vzs)
@@ -303,15 +346,19 @@ def _resolve_relative_velocity_orbit_placement(args: argparse.Namespace) -> tupl
     rel_pos, rel_vel = _rotate_orbit_plane(rel_pos, rel_vel, args.orbit_plane_angle_deg)
 
     masses = _total_galaxy_masses(args)
-    total_mass = masses.sum()
-    positions = np.vstack([
-        -masses[1] / total_mass * rel_pos,
-        masses[0] / total_mass * rel_pos,
+    pair_mass = masses[:2].sum()
+    positions = np.zeros((args.n_galaxies, 3), dtype=float)
+    velocities = np.zeros((args.n_galaxies, 3), dtype=float)
+    positions[:2] = np.vstack([
+        -masses[1] / pair_mass * rel_pos,
+        masses[0] / pair_mass * rel_pos,
     ])
-    velocities = np.vstack([
-        -masses[1] / total_mass * rel_vel,
-        masses[0] / total_mass * rel_vel,
+    velocities[:2] = np.vstack([
+        -masses[1] / pair_mass * rel_vel,
+        masses[0] / pair_mass * rel_vel,
     ])
+    positions, velocities = _apply_host_relative_placements(args, positions, velocities, 2)
+    positions, velocities = _center_all_galaxies_on_com(masses, positions, velocities)
 
     box_center = args.box_kpc / 2.0
     box_positions = positions + box_center
@@ -1072,6 +1119,19 @@ def _collect_galaxy_values(galaxies: list[dict], path: tuple[str, ...]) -> list 
     return values
 
 
+def _collect_optional_galaxy_values(galaxies: list[dict], path: tuple[str, ...]) -> list | None:
+    values = []
+    seen = False
+    for galaxy in galaxies:
+        section = galaxy
+        for key in path[:-1]:
+            section = section.get(key, {})
+        value = section.get(path[-1])
+        seen = seen or value is not None
+        values.append(value)
+    return values if seen else None
+
+
 def _collect_galaxy_vectors(galaxies: list[dict], key: str) -> tuple[list, list, list] | None:
     vectors = _collect_galaxy_values(galaxies, ("placement", key))
     if vectors is None:
@@ -1140,6 +1200,7 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
         raise ValueError("galaxies must be a non-empty YAML list")
 
     args.n_galaxies = len(galaxies)
+    args.galaxy_names = [galaxy.get("name", f"galaxy_{i}") for i, galaxy in enumerate(galaxies)]
     galaxy_mappings = {
         "dm_mass_msun": ("masses", "dm_msun"),
         "star_mass_msun": ("masses", "stars_msun"),
@@ -1175,7 +1236,13 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
         "cgm_temperature_ceiling_K": ("cgm", "temperature_ceiling_K"),
     }
     for attr, path in galaxy_mappings.items():
-        values = _collect_galaxy_values(galaxies, path)
+        if attr.startswith("cgm_"):
+            values = _collect_optional_galaxy_values(galaxies, path)
+            if values is not None:
+                default_value = getattr(args, attr)[0]
+                values = [default_value if value is None else value for value in values]
+        else:
+            values = _collect_galaxy_values(galaxies, path)
         if values is not None:
             setattr(args, attr, values)
 
@@ -1185,6 +1252,22 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
     velocities = _collect_galaxy_vectors(galaxies, "velocity_kms")
     if velocities is not None:
         args.vxs, args.vys, args.vzs = velocities
+
+    relative_to = _collect_optional_galaxy_values(galaxies, ("placement", "relative_to"))
+    if relative_to is not None:
+        args.relative_to = relative_to
+    relative_positions = _collect_optional_galaxy_values(galaxies, ("placement", "relative_position_kpc"))
+    if relative_positions is not None:
+        for vector in relative_positions:
+            if vector is not None and len(vector) != 3:
+                raise ValueError("galaxies[].placement.relative_position_kpc must have three values")
+        args.relative_position_kpc = relative_positions
+    relative_velocities = _collect_optional_galaxy_values(galaxies, ("placement", "relative_velocity_kms"))
+    if relative_velocities is not None:
+        for vector in relative_velocities:
+            if vector is not None and len(vector) != 3:
+                raise ValueError("galaxies[].placement.relative_velocity_kms must have three values")
+        args.relative_velocity_kms = relative_velocities
 
     if any(galaxy.get("bar", {}).get("enabled", False) for galaxy in galaxies):
         args.bar_enabled = True
@@ -1205,8 +1288,12 @@ def _default_generator_args() -> argparse.Namespace:
         gas_mass_msun=None,
         gas_part_mass_msun=None,
         n_galaxies=1,
+        galaxy_names=["galaxy_0"],
         inclination_deg=None,
         node_angle_deg=None,
+        relative_to=[None],
+        relative_position_kpc=[None],
+        relative_velocity_kms=[None],
         xs=None,
         ys=None,
         zs=None,
