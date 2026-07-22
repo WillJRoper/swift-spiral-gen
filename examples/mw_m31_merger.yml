@@ -128,16 +128,19 @@ galaxies:
       # galaxy centre rather than relying on FoF seeding during the run.
       mass_msun: 4.3e6
     cgm:
-      # Approximate hot MW circumgalactic medium. This is not hydrostatic, but it
-      # is much closer than a uniform box background: a spherical beta-profile-like
-      # halo sampled from r_min to r_max with T ~ 10^6 K.
+      # Hydrostatic hot MW circumgalactic medium. Gas is sampled from a spherical
+      # beta-profile-like density law and assigned radius-dependent internal
+      # energy from hydrostatic balance in the MW's sphericalized halo+bulge+disc
+      # potential. The floor/ceiling only prevent unphysical extremes from this
+      # idealized model.
       enabled: true
       mass_msun: 5.0e10
       r_min_kpc: 20
       r_max_kpc: 300
       core_radius_kpc: 20
       beta: 0.5
-      temperature_K: 1.0e6
+      temperature_floor_K: 3.0e5
+      temperature_ceiling_K: 3.0e6
     spiral:
       # Mild spiral perturbation. Keep stream_frac small for a stable initial test.
       n_arms: 2
@@ -177,15 +180,16 @@ galaxies:
       # M31's central SMBH is much more massive than Sgr A*.
       mass_msun: 1.4e8
     cgm:
-      # Slightly more massive and extended hot halo for M31, consistent with M31
-      # being the larger system in this idealized analogue.
+      # Slightly more massive and extended hydrostatic hot halo for M31,
+      # consistent with M31 being the larger system in this idealized analogue.
       enabled: true
       mass_msun: 7.0e10
       r_min_kpc: 20
       r_max_kpc: 350
       core_radius_kpc: 25
       beta: 0.5
-      temperature_K: 1.0e6
+      temperature_floor_K: 3.0e5
+      temperature_ceiling_K: 3.0e6
     spiral:
       n_arms: 2
       pitch_deg: 15

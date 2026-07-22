@@ -284,7 +284,8 @@ class TestFullPipeline:
                 "r_max_kpc": 5.0,
                 "core_radius_kpc": 2.0,
                 "beta": 0.5,
-                "temperature_K": 1e6,
+                "temperature_floor_K": 3e5,
+                "temperature_ceiling_K": 3e6,
             }
 
             result = _run_generator(config, tmpdir)

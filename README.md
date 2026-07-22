@@ -124,9 +124,10 @@ If omitted or set to `0`, no explicit black hole is written for that galaxy. Whe
 - `galaxies[].cgm.r_max_kpc`: outer sampling radius
 - `galaxies[].cgm.core_radius_kpc`: beta-profile core radius
 - `galaxies[].cgm.beta`: beta-profile slope parameter
-- `galaxies[].cgm.temperature_K`: gas temperature used for internal energy
+- `galaxies[].cgm.temperature_floor_K`: lower bound for hydrostatic temperature
+- `galaxies[].cgm.temperature_ceiling_K`: upper bound for hydrostatic temperature
 
-The CGM sampler uses a spherical beta-profile-like density law and assigns the galaxy bulk velocity. It is an approximate hot halo, not a hydrostatic equilibrium solution.
+The CGM sampler uses a spherical beta-profile-like density law and assigns the galaxy bulk velocity. Internal energies are computed from hydrostatic balance in a sphericalized halo+bulge+disc+black-hole potential, then clipped to the configured temperature floor/ceiling to avoid unphysical extremes from the idealized model.
 
 ### Multi-Galaxy Placement
 

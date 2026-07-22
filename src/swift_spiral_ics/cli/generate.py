@@ -12,7 +12,7 @@ from ..io.swift_writer import compute_internal_energy, write_swift_ic
 from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
 from ..physics.orbits import parabolic_orbit_initial_conditions
-from ..physics.profiles import nfw_params
+from ..physics.profiles import exponential_disc_mass, hernquist_mass, nfw_mass, nfw_params
 from ..physics.sampling import (
     sample_bulge_velocities,
     sample_disc_velocities,
@@ -147,8 +147,11 @@ def _normalise_per_galaxy_args(args: argparse.Namespace) -> None:
         args.cgm_core_radius_kpc, args.n_galaxies, "cgm.core_radius_kpc"
     )
     args.cgm_beta = _resolve_per_galaxy_values(args.cgm_beta, args.n_galaxies, "cgm.beta")
-    args.cgm_temperature_K = _resolve_per_galaxy_values(
-        args.cgm_temperature_K, args.n_galaxies, "cgm.temperature_K"
+    args.cgm_temperature_floor_K = _resolve_per_galaxy_values(
+        args.cgm_temperature_floor_K, args.n_galaxies, "cgm.temperature_floor_K"
+    )
+    args.cgm_temperature_ceiling_K = _resolve_per_galaxy_values(
+        args.cgm_temperature_ceiling_K, args.n_galaxies, "cgm.temperature_ceiling_K"
     )
     args.n_arms = _resolve_per_galaxy_values(args.n_arms, args.n_galaxies, "--n-arms")
     args.pitch_deg = _resolve_per_galaxy_values(args.pitch_deg, args.n_galaxies, "--pitch-deg")
@@ -565,10 +568,23 @@ def generate_galaxy_particles(
             )
             vel_cgm = np.zeros_like(pos_cgm)
             mass_cgm = _component_masses(cgm_mass_msun, n_cgm)
-            internal_energy_cgm = np.full(
-                n_cgm,
-                compute_internal_energy(T=_get_galaxy_value(args.cgm_temperature_K, galaxy_id)),
-                dtype=float,
+            radius_cgm = np.linalg.norm(pos_cgm, axis=1)
+            internal_energy_cgm = _hydrostatic_cgm_internal_energy(
+                radius_cgm,
+                _get_galaxy_value(args.cgm_r_max_kpc, galaxy_id),
+                _get_galaxy_value(args.cgm_core_radius_kpc, galaxy_id),
+                _get_galaxy_value(args.cgm_beta, galaxy_id),
+                m200_msun,
+                c200,
+                m_bulge_msun,
+                bulge_a_kpc,
+                M_star,
+                rd_star_kpc,
+                M_gas,
+                rd_gas_kpc,
+                m_black_hole_msun,
+                _get_galaxy_value(args.cgm_temperature_floor_K, galaxy_id),
+                _get_galaxy_value(args.cgm_temperature_ceiling_K, galaxy_id),
             )
             pos_gas = np.vstack([pos_gas, pos_cgm])
             vel_gas = np.vstack([vel_gas, vel_cgm])
@@ -659,6 +675,64 @@ def _sample_cgm_beta_profile(
         ]))
 
     return np.vstack(samples)[:n_particles]
+
+
+def _cgm_density_shape(radius: np.ndarray, core_radius_kpc: float, beta: float) -> np.ndarray:
+    return (1.0 + (radius / core_radius_kpc) ** 2) ** (-1.5 * beta)
+
+
+def _hydrostatic_cgm_internal_energy(
+    radius: np.ndarray,
+    r_max_kpc: float,
+    core_radius_kpc: float,
+    beta: float,
+    m200_msun: float,
+    c200: float,
+    m_bulge_msun: float,
+    bulge_a_kpc: float,
+    m_star_msun: float,
+    stellar_scale_length_kpc: float,
+    m_gas_msun: float,
+    gas_scale_length_kpc: float,
+    m_black_hole_msun: float,
+    temperature_floor_K: float,
+    temperature_ceiling_K: float,
+) -> np.ndarray:
+    if temperature_floor_K <= 0.0:
+        raise ValueError("CGM temperature_floor_K must be positive")
+    if temperature_ceiling_K < temperature_floor_K:
+        raise ValueError("CGM temperature_ceiling_K must be >= temperature_floor_K")
+
+    gamma = 5.0 / 3.0
+    r_min_grid = max(1.0e-3, float(np.min(radius)) * 0.5)
+    r_grid = np.geomspace(r_min_grid, r_max_kpc, 2048)
+    r_s, _ = nfw_params(m200_msun, c200)
+    m_enclosed = (
+        nfw_mass(r_grid, m200_msun, c200, r_s)
+        + hernquist_mass(r_grid, m_bulge_msun, bulge_a_kpc)
+        + exponential_disc_mass(r_grid, m_star_msun, stellar_scale_length_kpc)
+        + exponential_disc_mass(r_grid, m_gas_msun, gas_scale_length_kpc)
+        + m_black_hole_msun
+    )
+    density = _cgm_density_shape(r_grid, core_radius_kpc, beta)
+    gravity = G_KPC_KMS2_MSUN * m_enclosed / np.maximum(r_grid, 1.0e-6) ** 2
+    integrand = density * gravity
+
+    dr = np.diff(r_grid)
+    trapezoids = 0.5 * (integrand[:-1] + integrand[1:]) * dr
+    pressure_integral = np.zeros_like(r_grid)
+    pressure_integral[:-1] = np.cumsum(trapezoids[::-1])[::-1]
+
+    boundary_internal_energy = compute_internal_energy(T=temperature_floor_K)
+    boundary_sigma2 = (gamma - 1.0) * boundary_internal_energy
+    boundary_pressure = density[-1] * boundary_sigma2
+    sigma2_grid = (boundary_pressure + pressure_integral) / np.maximum(density, 1.0e-300)
+    internal_energy_grid = sigma2_grid / (gamma - 1.0)
+
+    floor_u = compute_internal_energy(T=temperature_floor_K)
+    ceiling_u = compute_internal_energy(T=temperature_ceiling_K)
+    internal_energy = np.interp(radius, r_grid, internal_energy_grid)
+    return np.clip(internal_energy, floor_u, ceiling_u)
 
 
 def _sample_cylindrical_halo_velocities(
@@ -1097,7 +1171,8 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
         "cgm_r_max_kpc": ("cgm", "r_max_kpc"),
         "cgm_core_radius_kpc": ("cgm", "core_radius_kpc"),
         "cgm_beta": ("cgm", "beta"),
-        "cgm_temperature_K": ("cgm", "temperature_K"),
+        "cgm_temperature_floor_K": ("cgm", "temperature_floor_K"),
+        "cgm_temperature_ceiling_K": ("cgm", "temperature_ceiling_K"),
     }
     for attr, path in galaxy_mappings.items():
         values = _collect_galaxy_values(galaxies, path)
@@ -1161,7 +1236,8 @@ def _default_generator_args() -> argparse.Namespace:
         cgm_r_max_kpc=[250.0],
         cgm_core_radius_kpc=[3.0],
         cgm_beta=[0.5],
-        cgm_temperature_K=[1.0e6],
+        cgm_temperature_floor_K=[1.0e5],
+        cgm_temperature_ceiling_K=[3.0e6],
         n_arms=[2],
         pitch_deg=[15.0],
         arm_strength=[0.3],
