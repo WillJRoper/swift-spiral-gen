@@ -25,6 +25,26 @@ if TYPE_CHECKING:
     from .grid_solver import GalaxyGridSolver
 
 
+def _cap_speed_at_escape_fraction(
+    vx: np.ndarray,
+    vy: np.ndarray,
+    vz: np.ndarray,
+    v_escape: np.ndarray,
+    fraction: float = 0.9,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Cap sampled velocities without piling particles up near escape speed."""
+
+    speed = np.sqrt(vx**2 + vy**2 + vz**2)
+    speed_limit = fraction * v_escape
+    too_fast = speed > speed_limit
+    if np.any(too_fast):
+        rescale = speed_limit[too_fast] / np.maximum(speed[too_fast], 1.0e-30)
+        vx[too_fast] *= rescale
+        vy[too_fast] *= rescale
+        vz[too_fast] *= rescale
+    return vx, vy, vz
+
+
 @njit
 def _spiral_modulation_jit(
     R: np.ndarray,
@@ -327,17 +347,7 @@ def sample_halo_velocities(
     vy = rng.normal(0, sigma_r, N)
     vz = rng.normal(0, sigma_r, N)
 
-    # Truncate at escape velocity
-    v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
-    too_fast = v_mag > v_esc
-    if np.any(too_fast):
-        # Rescale to 99% of escape velocity
-        rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
-        vx[too_fast] *= rescale
-        vy[too_fast] *= rescale
-        vz[too_fast] *= rescale
-
-    return vx, vy, vz
+    return _cap_speed_at_escape_fraction(vx, vy, vz, v_esc)
 
 
 def sample_bulge_velocities(
@@ -378,17 +388,7 @@ def sample_bulge_velocities(
     vy = rng.normal(0, sigma_r, N)
     vz = rng.normal(0, sigma_r, N)
 
-    # Truncate at escape velocity
-    v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
-    too_fast = v_mag > v_esc
-    if np.any(too_fast):
-        # Rescale to 99% of escape velocity
-        rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
-        vx[too_fast] *= rescale
-        vy[too_fast] *= rescale
-        vz[too_fast] *= rescale
-
-    return vx, vy, vz
+    return _cap_speed_at_escape_fraction(vx, vy, vz, v_esc)
 
 
 def sample_disc_velocities(
@@ -472,13 +472,4 @@ def sample_disc_velocities(
     # Truncate at escape velocity (safety check)
     v_esc = escape_velocity_from_grid(R, z, grid_solver)
 
-    v_mag = np.sqrt(vx**2 + vy**2 + vz**2)
-    too_fast = v_mag > v_esc
-    if np.any(too_fast):
-        # Rescale to 99% of escape velocity
-        rescale = v_esc[too_fast] / v_mag[too_fast] * 0.99
-        vx[too_fast] *= rescale
-        vy[too_fast] *= rescale
-        vz[too_fast] *= rescale
-
-    return vx, vy, vz
+    return _cap_speed_at_escape_fraction(vx, vy, vz, v_esc)

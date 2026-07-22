@@ -3,6 +3,7 @@
 import numpy as np
 
 from swift_spiral_ics.physics import kinematics, perturbations, potentials, profiles
+from swift_spiral_ics.physics.sampling import _cap_speed_at_escape_fraction
 
 
 class TestProfiles:
@@ -88,6 +89,19 @@ class TestKinematics:
 
         assert np.all(sigma_R > 0)
         assert np.all(np.isfinite(sigma_R))
+
+    def test_velocity_cap_avoids_near_escape_pileup(self):
+        """Truncation does not place particles just below escape speed."""
+
+        vx = np.array([100.0, 300.0])
+        vy = np.array([0.0, 0.0])
+        vz = np.array([0.0, 0.0])
+        v_escape = np.array([100.0, 100.0])
+
+        vx, vy, vz = _cap_speed_at_escape_fraction(vx, vy, vz, v_escape)
+        speed = np.sqrt(vx**2 + vy**2 + vz**2)
+
+        assert np.all(speed <= 0.9 * v_escape)
 
 
 class TestPerturbations:
