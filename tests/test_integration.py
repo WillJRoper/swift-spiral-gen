@@ -7,6 +7,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 import yaml
 
 from swift_spiral_ics.cli.generate import (
@@ -17,6 +18,7 @@ from swift_spiral_ics.cli.generate import (
     _remove_disc_streaming_modes,
     _resolve_galaxy_placement,
     _rotate_disc_orientation,
+    _validate_host_relative_satellite_orbits,
 )
 from swift_spiral_ics.physics.sampling import (
     sample_exponential_disc,
@@ -408,7 +410,22 @@ class TestFullPipeline:
         assert np.allclose(velocities[1] - velocities[0], [-110.0, 17.0, 0.0])
         assert np.allclose(positions[2] - positions[0], [-1.0, -41.0, -28.0])
         assert np.allclose(positions[3] - positions[0], [15.0, -38.0, -44.0])
+        assert np.allclose(velocities[2] - velocities[0], [-32.0, -99.0, 147.0])
+        assert np.allclose(velocities[3] - velocities[2], [16.0, 62.0, 28.0])
         assert np.all(np.isfinite(velocities))
+
+    def test_host_relative_satellite_orbits_reject_fast_flybys(self):
+        """Host-relative satellite examples should be bound test orbits, not flybys."""
+
+        config_file = Path(__file__).parents[1] / "examples" / "mw_m31_merger.yml"
+        args = _apply_config_file(_default_generator_args(), str(config_file))
+        _normalise_per_galaxy_args(args)
+        args.relative_to[2] = "Milky Way"
+        args.relative_position_kpc[2] = [-1.0, -41.0, -28.0]
+        args.relative_velocity_kms[2] = [-57.0, -226.0, 221.0]
+
+        with pytest.raises(ValueError, match="too fast"):
+            _validate_host_relative_satellite_orbits(args)
 
     def test_mw_m31_resolution_example_configs_parse(self):
         """Resolution variants keep the same setup with finer particle masses."""

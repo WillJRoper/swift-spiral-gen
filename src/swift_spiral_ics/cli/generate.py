@@ -13,7 +13,7 @@ from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
 from ..physics.kinematics import escape_velocity_from_grid
 from ..physics.orbits import parabolic_orbit_initial_conditions
-from ..physics.profiles import nfw_params
+from ..physics.profiles import exponential_disc_mass, hernquist_mass, nfw_mass, nfw_params
 from ..physics.sampling import (
     sample_bulge_velocities,
     sample_disc_velocities,
@@ -358,6 +358,7 @@ def _resolve_relative_velocity_orbit_placement(args: argparse.Namespace) -> tupl
         -masses[1] / pair_mass * rel_vel,
         masses[0] / pair_mass * rel_vel,
     ])
+    _validate_host_relative_satellite_orbits(args)
     positions, velocities = _apply_host_relative_placements(args, positions, velocities, 2)
     positions, velocities = _center_all_galaxies_on_com(masses, positions, velocities)
 
@@ -370,6 +371,52 @@ def _resolve_relative_velocity_orbit_placement(args: argparse.Namespace) -> tupl
         )
 
     return positions, velocities
+
+
+def _host_enclosed_mass_msun(args: argparse.Namespace, host_index: int, radius_kpc: float) -> float:
+    m200 = _get_galaxy_value(args.m200_msun, host_index)
+    c200 = _get_galaxy_value(args.c200, host_index)
+    r_s, _ = nfw_params(m200, c200)
+    return (
+        nfw_mass(radius_kpc, m200, c200, r_s)
+        + hernquist_mass(
+            radius_kpc,
+            _get_galaxy_value(args.m_bulge_msun, host_index),
+            _get_galaxy_value(args.bulge_a_kpc, host_index),
+        )
+        + exponential_disc_mass(
+            radius_kpc,
+            _get_galaxy_value(args.m_star_msun, host_index),
+            _get_galaxy_value(args.stellar_disk_scale_length_kpc, host_index),
+        )
+        + exponential_disc_mass(
+            radius_kpc,
+            _get_galaxy_value(args.m_gas_msun, host_index),
+            _get_galaxy_value(args.gas_disk_scale_length_kpc, host_index),
+        )
+        + _get_galaxy_value(args.black_hole_mass_msun, host_index)
+    )
+
+
+def _validate_host_relative_satellite_orbits(args: argparse.Namespace) -> None:
+    for i in range(2, args.n_galaxies):
+        host_name = args.relative_to[i]
+        rel_pos = args.relative_position_kpc[i]
+        rel_vel = args.relative_velocity_kms[i]
+        if host_name is None or rel_pos is None or rel_vel is None:
+            continue
+        host_index = _galaxy_index_by_name(args, host_name)
+        radius = float(np.linalg.norm(np.asarray(rel_pos, dtype=float)))
+        speed = float(np.linalg.norm(np.asarray(rel_vel, dtype=float)))
+        if radius <= 0.0:
+            raise ValueError("Host-relative satellite radius must be positive")
+        enclosed_mass = _host_enclosed_mass_msun(args, host_index, radius)
+        circular_speed = float(np.sqrt(G_KPC_KMS2_MSUN * enclosed_mass / radius))
+        if speed > 1.2 * circular_speed:
+            raise ValueError(
+                f"Satellite '{args.galaxy_names[i]}' is too fast for a stable orbit around "
+                f"'{host_name}': speed={speed:.1f} km/s, circular speed={circular_speed:.1f} km/s"
+            )
 
 
 def _resolve_galaxy_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:

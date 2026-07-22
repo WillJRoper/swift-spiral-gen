@@ -239,12 +239,12 @@ galaxies:
       strength: 0.05
       stream_frac: 0.0
     placement:
-      # Approximate present-day Galactocentric LMC position/velocity, in the same
-      # arbitrary Cartesian frame used for the MW-M31 analogue. The generator then
-      # recentres the full four-galaxy system on its total centre of mass.
+      # Bound LMC test orbit around the MW. This keeps the satellite dynamically
+      # present without using the high-speed present-day first-infall velocity,
+      # which simply flies away in this isolated idealized setup.
       relative_to: Milky Way
       relative_position_kpc: [-1, -41, -28]
-      relative_velocity_kms: [-57, -226, 221]
+      relative_velocity_kms: [-32, -99, 147]
       inclination_deg: 35
       node_angle_deg: 130
 
@@ -279,9 +279,9 @@ galaxies:
       strength: 0.05
       stream_frac: 0.0
     placement:
-      # Approximate present-day Galactocentric SMC position/velocity.
-      relative_to: Milky Way
-      relative_position_kpc: [15, -38, -44]
-      relative_velocity_kms: [19, -174, 173]
+      # Bound SMC test orbit around the LMC, not an independent MW satellite.
+      relative_to: LMC
+      relative_position_kpc: [16, 3, -16]
+      relative_velocity_kms: [16, 62, 28]
       inclination_deg: 45
       node_angle_deg: 45
