@@ -11,6 +11,7 @@ import yaml
 from ..io.swift_writer import compute_internal_energy, write_swift_ic
 from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
+from ..physics.kinematics import escape_velocity_from_grid
 from ..physics.orbits import parabolic_orbit_initial_conditions
 from ..physics.profiles import nfw_params
 from ..physics.sampling import (
@@ -559,6 +560,7 @@ def generate_galaxy_particles(
         spiral_params=None,
         bar_params=None,
     )
+    vel_star = _remove_disc_streaming_modes(pos_star, vel_star)
     vel_gas = _sample_cylindrical_disc_velocities(
         pos_gas,
         mass_gas,
@@ -641,6 +643,8 @@ def generate_galaxy_particles(
             "subgrid_mass": mass_black_hole,
         },
     }
+
+    _validate_generated_galaxy_stability(galaxy_id, galaxy_data, grid_solver)
 
     # Jitter identical positions
     galaxy_data["dm"]["pos"] = _jitter_duplicates(galaxy_data["dm"]["pos"], rng, id_str="DM")
@@ -882,6 +886,105 @@ def _sample_cylindrical_disc_velocities(
         is_gas=is_gas,
     )
     return np.column_stack([vx, vy, vz])
+
+
+def _remove_disc_streaming_modes(pos: np.ndarray, vel: np.ndarray) -> np.ndarray:
+    """Remove coherent annular radial/vertical drift from collisionless discs."""
+
+    if len(pos) < 20:
+        return vel
+
+    radius = np.sqrt(pos[:, 0] ** 2 + pos[:, 1] ** 2)
+    nonzero_radius = radius > 0.0
+    if np.count_nonzero(nonzero_radius) < 20:
+        return vel
+
+    out = vel.copy()
+    cos_phi = np.zeros_like(radius)
+    sin_phi = np.zeros_like(radius)
+    cos_phi[nonzero_radius] = pos[nonzero_radius, 0] / radius[nonzero_radius]
+    sin_phi[nonzero_radius] = pos[nonzero_radius, 1] / radius[nonzero_radius]
+
+    v_radial = out[:, 0] * cos_phi + out[:, 1] * sin_phi
+    n_bins = min(64, max(4, len(pos) // 200))
+    edges = np.quantile(radius[nonzero_radius], np.linspace(0.0, 1.0, n_bins + 1))
+    edges = np.unique(edges)
+    if len(edges) < 3:
+        return out
+
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        in_bin = (radius >= lo) & (radius <= hi) & nonzero_radius
+        if np.count_nonzero(in_bin) < 10:
+            continue
+        radial_mean = float(np.mean(v_radial[in_bin]))
+        vertical_mean = float(np.mean(out[in_bin, 2]))
+        out[in_bin, 0] -= radial_mean * cos_phi[in_bin]
+        out[in_bin, 1] -= radial_mean * sin_phi[in_bin]
+        out[in_bin, 2] -= vertical_mean
+
+    return out
+
+
+def _validate_generated_galaxy_stability(
+    galaxy_id: int,
+    galaxy_data: dict,
+    grid_solver: GalaxyGridSolver,
+) -> None:
+    """Reject generated galaxies with obvious disequilibrium before writing ICs."""
+
+    for component_name in ("dm", "stars", "bulge"):
+        component = galaxy_data[component_name]
+        pos = component["pos"]
+        vel = component["vel"]
+        if len(pos) == 0:
+            continue
+        radius = np.sqrt(pos[:, 0] ** 2 + pos[:, 1] ** 2)
+        speed = np.linalg.norm(vel, axis=1)
+        v_escape = escape_velocity_from_grid(radius, pos[:, 2], grid_solver)
+        near_unbound = float(np.mean(speed > 0.95 * v_escape))
+        if near_unbound > 0.01:
+            raise ValueError(
+                f"Galaxy {galaxy_id} {component_name} is not stable: "
+                f"{near_unbound:.2%} of particles are within 5% of escape speed"
+            )
+
+    stars = galaxy_data["stars"]
+    if len(stars["pos"]) >= 100:
+        _validate_stellar_disc_streaming(galaxy_id, stars["pos"], stars["vel"])
+
+
+def _validate_stellar_disc_streaming(galaxy_id: int, pos: np.ndarray, vel: np.ndarray) -> None:
+    radius = np.sqrt(pos[:, 0] ** 2 + pos[:, 1] ** 2)
+    nonzero_radius = radius > 0.0
+    if np.count_nonzero(nonzero_radius) < 100:
+        return
+
+    cos_phi = np.zeros_like(radius)
+    sin_phi = np.zeros_like(radius)
+    cos_phi[nonzero_radius] = pos[nonzero_radius, 0] / radius[nonzero_radius]
+    sin_phi[nonzero_radius] = pos[nonzero_radius, 1] / radius[nonzero_radius]
+    v_radial = vel[:, 0] * cos_phi + vel[:, 1] * sin_phi
+    v_phi = -vel[:, 0] * sin_phi + vel[:, 1] * cos_phi
+
+    n_bins = min(32, max(4, len(pos) // 500))
+    edges = np.unique(np.quantile(radius[nonzero_radius], np.linspace(0.0, 1.0, n_bins + 1)))
+    worst_radial = 0.0
+    worst_vertical = 0.0
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        in_bin = (radius >= lo) & (radius <= hi) & nonzero_radius
+        if np.count_nonzero(in_bin) < 25:
+            continue
+        rotation = max(abs(float(np.median(v_phi[in_bin]))), 1.0)
+        radial_ratio = abs(float(np.mean(v_radial[in_bin]))) / rotation
+        vertical_ratio = abs(float(np.mean(vel[in_bin, 2]))) / rotation
+        worst_radial = max(worst_radial, radial_ratio)
+        worst_vertical = max(worst_vertical, vertical_ratio)
+
+    if worst_radial > 0.03 or worst_vertical > 0.03:
+        raise ValueError(
+            f"Galaxy {galaxy_id} stellar disc is not stable: coherent streaming remains "
+            f"(max <vR>/vphi={worst_radial:.3f}, max <vz>/vphi={worst_vertical:.3f})"
+        )
 
 
 def _rotate_x(values: np.ndarray, angle_deg: float) -> np.ndarray:

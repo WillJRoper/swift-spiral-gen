@@ -14,6 +14,7 @@ from swift_spiral_ics.cli.generate import (
     _default_generator_args,
     _hydrostatic_disc_internal_energy,
     _normalise_per_galaxy_args,
+    _remove_disc_streaming_modes,
     _resolve_galaxy_placement,
     _rotate_disc_orientation,
 )
@@ -249,6 +250,23 @@ class TestFullPipeline:
 
         assert seen_spiral_params[0] is None
         assert seen_spiral_params[1] is not None
+
+    def test_stellar_disc_streaming_modes_are_removed_by_annulus(self):
+        """Collisionless stabilization removes coherent radial expansion bands."""
+
+        radius = np.linspace(1.0, 10.0, 200)
+        phi = np.linspace(0.0, 2.0 * np.pi, 200, endpoint=False)
+        pos = np.column_stack([radius * np.cos(phi), radius * np.sin(phi), np.zeros_like(radius)])
+        vel = np.column_stack([20.0 * np.cos(phi), 20.0 * np.sin(phi), np.full_like(radius, 5.0)])
+
+        stabilized = _remove_disc_streaming_modes(pos, vel)
+        v_radial = (
+            stabilized[:, 0] * np.cos(phi)
+            + stabilized[:, 1] * np.sin(phi)
+        )
+
+        assert abs(float(np.mean(v_radial))) < 1.0e-12
+        assert abs(float(np.mean(stabilized[:, 2]))) < 1.0e-12
 
     def test_multi_galaxy_positions_are_literal_box_coordinates(self):
         """Per-galaxy YAML positions are interpreted as literal coordinates in the box."""

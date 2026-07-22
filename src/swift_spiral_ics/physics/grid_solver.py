@@ -272,6 +272,7 @@ class GalaxyGridSolver:
             # Toomre Q based: sigma_R = Q * pi * G * Sigma / kappa
             sigma_R_prof = Q_target * np.pi * G.value * Sigma_comp_prof / kappa_profile
             sigma_R_prof = np.maximum(sigma_R_prof, 5.0) # Floor dispersion
+            sigma_R_prof = np.minimum(sigma_R_prof, np.maximum(0.35 * v_c_profile, 20.0))
 
         # 5. Calculate sigma_phi, sigma_z
         if is_gas:
@@ -283,6 +284,7 @@ class GalaxyGridSolver:
             support_force = np.abs(self.get_potential_and_forces(R_unique, z_support)["FZ"])
             sigma_z_support = np.sqrt(np.maximum(z_d * support_force, 0.0))
             sigma_z_prof = np.maximum(sigma_z_prof, sigma_z_support)
+            sigma_phi_prof = np.minimum(sigma_phi_prof, np.maximum(0.30 * v_c_profile, 15.0))
 
         # 6. Asymmetric Drift (v_phi_mean)
         # v_phi^2 = v_c^2 + sigma_R^2 * [ R * (dlnSigma/dR + dlnSigma_R^2/dR) + (1 - sigma_phi^2/sigma_R^2) ]
@@ -309,5 +311,11 @@ class GalaxyGridSolver:
         sigma_phi_out = np.interp(R_query, R_unique, sigma_phi_prof)
         sigma_z_out = np.interp(R_query, R_unique, sigma_z_prof)
         v_phi_out = np.interp(R_query, R_unique, v_phi_prof)
+        if not is_gas:
+            local_force = self.get_potential_and_forces(R_query, pos_comp[:, 2])["FR"]
+            local_v_c = np.sqrt(np.maximum(R_query * np.abs(local_force), 0.0))
+            # Off-plane stars feel a weaker radial force than midplane particles.
+            # Do not assign them super-circular azimuthal speeds from the z=0 curve.
+            v_phi_out = np.minimum(v_phi_out, local_v_c)
 
         return v_c_out, sigma_R_out, sigma_phi_out, sigma_z_out, v_phi_out
