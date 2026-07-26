@@ -4,6 +4,8 @@ Command line interface for generating initial conditions for SWIFT simulations.
 
 import argparse
 import sys
+from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 import yaml
@@ -13,7 +15,13 @@ from ..io.yaml_writer import generate_swift_params
 from ..physics.grid_solver import GalaxyGridSolver
 from ..physics.kinematics import escape_velocity_from_grid
 from ..physics.orbits import parabolic_orbit_initial_conditions
-from ..physics.profiles import exponential_disc_mass, hernquist_mass, nfw_mass, nfw_params
+from ..physics.profiles import (
+    exponential_disc_mass,
+    hernquist_mass,
+    nfw_density,
+    nfw_mass,
+    nfw_params,
+)
 from ..physics.sampling import (
     sample_bulge_velocities,
     sample_disc_velocities,
@@ -185,6 +193,20 @@ def _normalise_per_galaxy_args(args: argparse.Namespace) -> None:
         )
     else:
         args.node_angle_deg = [0.0] * args.n_galaxies
+    args.relative_orbit_mode = _resolve_per_galaxy_values(
+        args.relative_orbit_mode, args.n_galaxies, "placement.orbit_mode"
+    )
+
+    # Satellite truncation changes the represented halo mass and therefore the
+    # required particle count. Keep particle masses at the configured target.
+    args.n_halo = [
+        _allocate_total_particles(
+            _represented_halo_mass_msun(args, i),
+            args.dm_part_mass_msun,
+            "--dm-part-mass-msun",
+        )
+        for i in range(args.n_galaxies)
+    ]
 
 
 def _resolve_axis_values(
@@ -202,7 +224,7 @@ def _resolve_axis_values(
 def _total_galaxy_masses(args: argparse.Namespace) -> np.ndarray:
     return np.asarray(
         [
-            args.m200_msun[i]
+            _represented_halo_mass_msun(args, i)
             + args.m_star_msun[i]
             + args.m_bulge_msun[i]
             + args.m_gas_msun[i]
@@ -410,6 +432,8 @@ def _validate_host_relative_satellite_orbits(args: argparse.Namespace) -> None:
         speed = float(np.linalg.norm(np.asarray(rel_vel, dtype=float)))
         if radius <= 0.0:
             raise ValueError("Host-relative satellite radius must be positive")
+        if args.relative_orbit_mode[i] == "observed_infall":
+            continue
         enclosed_mass = _host_enclosed_mass_msun(args, host_index, radius)
         circular_speed = float(np.sqrt(G_KPC_KMS2_MSUN * enclosed_mass / radius))
         if speed > 1.2 * circular_speed:
@@ -417,6 +441,113 @@ def _validate_host_relative_satellite_orbits(args: argparse.Namespace) -> None:
                 f"Satellite '{args.galaxy_names[i]}' is too fast for a stable orbit around "
                 f"'{host_name}': speed={speed:.1f} km/s, circular speed={circular_speed:.1f} km/s"
             )
+        tidal_radius = _satellite_tidal_radius_kpc(args, i)
+        stellar_extent = 4.0 * _get_galaxy_value(args.stellar_disk_scale_length_kpc, i)
+        gas_extent = 4.0 * _get_galaxy_value(args.gas_disk_scale_length_kpc, i)
+        if tidal_radius is not None and tidal_radius < max(stellar_extent, gas_extent):
+            raise ValueError(
+                f"Satellite '{args.galaxy_names[i]}' is too deep in '{host_name}' for a stable "
+                f"extended disc: tidal radius={tidal_radius:.1f} kpc, "
+                f"disc extent={max(stellar_extent, gas_extent):.1f} kpc"
+            )
+
+
+def _satellite_tidal_radius_kpc(args: argparse.Namespace, galaxy_id: int) -> float | None:
+    if galaxy_id < 2 or args.relative_to[galaxy_id] is None:
+        return None
+    rel_pos = args.relative_position_kpc[galaxy_id]
+    if rel_pos is None:
+        return None
+    radius = float(np.linalg.norm(np.asarray(rel_pos, dtype=float)))
+    if radius <= 0.0:
+        return None
+    host_index = _galaxy_index_by_name(args, args.relative_to[galaxy_id])
+    host_mass = _host_enclosed_mass_msun(args, host_index, radius)
+    baryonic_mass = (
+        args.m_star_msun[galaxy_id]
+        + args.m_bulge_msun[galaxy_id]
+        + args.m_gas_msun[galaxy_id]
+        + args.black_hole_mass_msun[galaxy_id]
+    )
+    satellite_mass = args.m200_msun[galaxy_id] + baryonic_mass
+    tidal_radius = radius * (satellite_mass / (3.0 * host_mass)) ** (1.0 / 3.0)
+    r_s, _ = nfw_params(args.m200_msun[galaxy_id], args.c200[galaxy_id])
+    r200 = r_s * args.c200[galaxy_id]
+    for _ in range(8):
+        truncation_radius = min(r200, 0.9 * tidal_radius)
+        halo_mass = _tapered_nfw_mass_msun(
+            args.m200_msun[galaxy_id],
+            args.c200[galaxy_id],
+            truncation_radius,
+        )
+        satellite_mass = halo_mass + baryonic_mass
+        updated = radius * (satellite_mass / (3.0 * host_mass)) ** (1.0 / 3.0)
+        if abs(updated - tidal_radius) <= 1.0e-6 * max(tidal_radius, 1.0):
+            break
+        tidal_radius = updated
+    return tidal_radius
+
+
+def _halo_truncation_radius_kpc(args: argparse.Namespace, galaxy_id: int) -> float:
+    r_s, _ = nfw_params(args.m200_msun[galaxy_id], args.c200[galaxy_id])
+    r200 = r_s * args.c200[galaxy_id]
+    tidal_radius = _satellite_tidal_radius_kpc(args, galaxy_id)
+    return r200 if tidal_radius is None else min(r200, 0.9 * tidal_radius)
+
+
+def _represented_halo_mass_msun(args: argparse.Namespace, galaxy_id: int) -> float:
+    if _satellite_tidal_radius_kpc(args, galaxy_id) is None:
+        return float(args.m200_msun[galaxy_id])
+    return _tapered_nfw_mass_msun(
+        args.m200_msun[galaxy_id],
+        args.c200[galaxy_id],
+        _halo_truncation_radius_kpc(args, galaxy_id),
+    )
+
+
+def _tapered_nfw_mass_msun(m200_msun: float, c200: float, radius_kpc: float) -> float:
+    """Mass of an NFW halo with a smooth taper over its outermost 20 percent."""
+
+    r_s, delta_c = nfw_params(m200_msun, c200)
+    radius = np.geomspace(max(1.0e-6 * r_s, 1.0e-6), radius_kpc, 4096)
+    taper_start = 0.8 * radius_kpc
+    taper = np.ones_like(radius)
+    taper_region = radius > taper_start
+    x = (radius[taper_region] - taper_start) / (radius_kpc - taper_start)
+    taper[taper_region] = 1.0 - _smoothstep(x)
+    integrand = 4.0 * np.pi * radius**2 * nfw_density(
+        radius, m200_msun, c200, delta_c, r_s
+    ) * taper
+    return float(np.trapezoid(integrand, radius))
+
+
+def _galaxy_potential_grids(
+    args: argparse.Namespace,
+    galaxy_id: int,
+    halo_radius_kpc: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build compact multiscale grids that resolve discs and extend through the halo."""
+
+    outer_radius = 1.25 * halo_radius_kpc
+    if _get_galaxy_value(args.cgm_enabled, galaxy_id):
+        outer_radius = max(outer_radius, _get_galaxy_value(args.cgm_r_max_kpc, galaxy_id))
+
+    n_r = max(32, int(args.nR_grid))
+    n_z = max(33, int(args.nz_grid))
+    if n_z % 2 == 0:
+        n_z += 1
+
+    # Quadratic coordinates provide sub-kpc spacing near the discs while retaining
+    # the full halo/CGM domain. The C++ ring solver supports non-uniform spacing.
+    radial_coordinate = np.linspace(0.0, 1.0, n_r)
+    signed_vertical_coordinate = np.linspace(-1.0, 1.0, n_z)
+    radius_grid = outer_radius * radial_coordinate**2
+    vertical_grid = (
+        outer_radius
+        * np.sign(signed_vertical_coordinate)
+        * np.abs(signed_vertical_coordinate) ** 2
+    )
+    return radius_grid, vertical_grid
 
 
 def _resolve_galaxy_placement(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
@@ -486,16 +617,22 @@ def generate_galaxy_particles(
     c200 = _get_galaxy_value(args.c200, galaxy_id)
     r_s, _ = nfw_params(m200_msun, c200)
 
-    # Calculate truncation radius
-    r_max_halo = r_s * 10
+    r_max_halo = _halo_truncation_radius_kpc(args, galaxy_id)
+    represented_halo_mass_msun = _represented_halo_mass_msun(args, galaxy_id)
+    is_tidally_truncated = _satellite_tidal_radius_kpc(args, galaxy_id) is not None
 
     n_halo = _get_galaxy_value(args.n_halo, galaxy_id)
     pos_halo = np.zeros((n_halo, 3))
-    mass_halo = _component_masses(m200_msun, n_halo)
+    mass_halo = _component_masses(represented_halo_mass_msun, n_halo)
 
     if n_halo > 0:
         x_halo, y_halo, z_halo = sample_nfw_halo(
-            n_halo, m200_msun, c200, r_max_halo, rng
+            n_halo,
+            m200_msun,
+            c200,
+            r_max_halo,
+            rng,
+            taper_start_fraction=0.8 if is_tidally_truncated else None,
         )
         pos_halo = np.column_stack([x_halo, y_halo, z_halo])
 
@@ -559,8 +696,7 @@ def generate_galaxy_particles(
         pos_gas = np.column_stack([x_gas, y_gas, z_gas])
 
     print(f"Computing isolated C++ grid potential for galaxy {galaxy_id}...")
-    R_grid_solver = np.linspace(0.0, args.box_kpc / 2.0, args.nR_grid)
-    z_grid_solver = np.linspace(-args.box_kpc / 2.0, args.box_kpc / 2.0, args.nz_grid)
+    R_grid_solver, z_grid_solver = _galaxy_potential_grids(args, galaxy_id, r_max_halo)
     grid_solver = GalaxyGridSolver(
         R_grid_solver,
         z_grid_solver,
@@ -606,6 +742,16 @@ def generate_galaxy_particles(
         is_gas=False,
         spiral_params=None,
         bar_params=None,
+    )
+    vel_star = _iteratively_match_stellar_disc_moments(
+        pos_star,
+        vel_star,
+        mass_star,
+        M_star,
+        rd_star_kpc,
+        zd_star_kpc,
+        _get_galaxy_value(args.Q_star, galaxy_id),
+        grid_solver,
     )
     vel_star = _remove_disc_streaming_modes(pos_star, vel_star)
     vel_gas = _sample_cylindrical_disc_velocities(
@@ -969,6 +1115,82 @@ def _remove_disc_streaming_modes(pos: np.ndarray, vel: np.ndarray) -> np.ndarray
         out[in_bin, 1] -= radial_mean * sin_phi[in_bin]
         out[in_bin, 2] -= vertical_mean
 
+    return out
+
+
+def _iteratively_match_stellar_disc_moments(
+    pos: np.ndarray,
+    vel: np.ndarray,
+    mass: np.ndarray,
+    total_mass: float,
+    scale_radius: float,
+    scale_height: float,
+    q_target: float,
+    grid_solver: GalaxyGridSolver,
+    iterations: int = 3,
+) -> np.ndarray:
+    """Match finite-particle annular moments to the axisymmetric Jeans solution."""
+
+    if len(pos) < 20:
+        return vel
+    radius = np.sqrt(pos[:, 0] ** 2 + pos[:, 1] ** 2)
+    nonzero = radius > 0.0
+    if np.count_nonzero(nonzero) < 20:
+        return vel
+
+    phi = np.arctan2(pos[:, 1], pos[:, 0])
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    _, target_sigma_r, target_sigma_phi, target_sigma_z, target_v_phi = (
+        grid_solver.get_cylindrical_kinematics(
+            radius,
+            pos,
+            mass,
+            total_mass,
+            scale_radius,
+            scale_height,
+            q_target,
+            False,
+        )
+    )
+
+    v_r = vel[:, 0] * cos_phi + vel[:, 1] * sin_phi
+    v_phi = -vel[:, 0] * sin_phi + vel[:, 1] * cos_phi
+    v_z = vel[:, 2].copy()
+    n_bins = min(64, max(4, len(pos) // 200))
+    edges = np.unique(np.quantile(radius[nonzero], np.linspace(0.0, 1.0, n_bins + 1)))
+
+    for _ in range(iterations):
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            in_bin = (radius >= lo) & (radius <= hi) & nonzero
+            if np.count_nonzero(in_bin) < 10:
+                continue
+
+            def match(
+                values: np.ndarray,
+                mean: float,
+                dispersion: float,
+                mask: np.ndarray = in_bin,
+            ) -> None:
+                current_mean = float(np.mean(values[mask]))
+                current_std = float(np.std(values[mask]))
+                values[mask] -= current_mean
+                if current_std > 0.0:
+                    values[mask] *= dispersion / current_std
+                values[mask] += mean
+
+            match(v_r, 0.0, float(np.median(target_sigma_r[in_bin])))
+            match(
+                v_phi,
+                float(np.median(target_v_phi[in_bin])),
+                float(np.median(target_sigma_phi[in_bin])),
+            )
+            match(v_z, 0.0, float(np.median(target_sigma_z[in_bin])))
+
+    out = np.empty_like(vel)
+    out[:, 0] = v_r * cos_phi - v_phi * sin_phi
+    out[:, 1] = v_r * sin_phi + v_phi * cos_phi
+    out[:, 2] = v_z
     return out
 
 
@@ -1338,8 +1560,7 @@ def _collect_galaxy_vectors(galaxies: list[dict], key: str) -> tuple[list, list,
 
 
 def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.Namespace:
-    with open(config_path) as handle:
-        config = _coerce_numeric_strings(yaml.safe_load(handle) or {})
+    config = _coerce_numeric_strings(_load_config_with_extends(Path(config_path)))
 
     if not isinstance(config, dict):
         raise ValueError("Generator config must be a YAML mapping")
@@ -1378,6 +1599,8 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
     _set_if_present(args, "nR_grid", grid, "nR")
     _set_if_present(args, "nz_grid", grid, "nz")
     _set_if_present(args, "eps_grid", grid, "eps_kpc")
+    _set_if_present(args, "dm_softening_kpc", grid, "dm_softening_kpc")
+    _set_if_present(args, "baryon_softening_kpc", grid, "baryon_softening_kpc")
     _set_if_present(args, "h_max_cell_fraction", grid, "h_max_cell_fraction")
     _set_if_present(args, "scheduler_tasks_per_cell", grid, "scheduler_tasks_per_cell")
     _set_if_present(args, "max_top_level_cells", grid, "max_top_level_cells")
@@ -1391,6 +1614,14 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
     galaxies = config.get("galaxies")
     if galaxies is None:
         return args
+    selected_galaxies = config.get("select_galaxies")
+    if selected_galaxies is not None:
+        selected_names = set(selected_galaxies)
+        galaxies = [galaxy for galaxy in galaxies if galaxy.get("name") in selected_names]
+        if len(galaxies) != len(selected_names):
+            found = {galaxy.get("name") for galaxy in galaxies}
+            missing = sorted(selected_names - found)
+            raise ValueError(f"Unknown selected galaxies: {', '.join(missing)}")
     if not isinstance(galaxies, list) or len(galaxies) == 0:
         raise ValueError("galaxies must be a non-empty YAML list")
 
@@ -1463,11 +1694,53 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
             if vector is not None and len(vector) != 3:
                 raise ValueError("galaxies[].placement.relative_velocity_kms must have three values")
         args.relative_velocity_kms = relative_velocities
+    relative_orbit_modes = _collect_optional_galaxy_values(galaxies, ("placement", "orbit_mode"))
+    if relative_orbit_modes is not None:
+        args.relative_orbit_mode = [
+            "stable" if value is None else value for value in relative_orbit_modes
+        ]
 
     if any(galaxy.get("bar", {}).get("enabled", False) for galaxy in galaxies):
         args.bar_enabled = True
 
     return args
+
+
+def _merge_config(base: dict, override: dict) -> dict:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if key == "extends":
+            continue
+        if key == "galaxies" and isinstance(value, list) and isinstance(merged.get(key), list):
+            galaxies = {galaxy.get("name"): deepcopy(galaxy) for galaxy in merged[key]}
+            order = [galaxy.get("name") for galaxy in merged[key]]
+            for galaxy_override in value:
+                name = galaxy_override.get("name")
+                if name in galaxies:
+                    galaxies[name] = _merge_config(galaxies[name], galaxy_override)
+                else:
+                    galaxies[name] = deepcopy(galaxy_override)
+                    order.append(name)
+            merged[key] = [galaxies[name] for name in order]
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_config(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _load_config_with_extends(config_path: Path) -> dict:
+    with config_path.open() as handle:
+        config = yaml.safe_load(handle) or {}
+    if not isinstance(config, dict):
+        raise ValueError("Generator config must be a YAML mapping")
+    parent = config.get("extends")
+    if parent is None:
+        return config
+    parent_path = (config_path.parent / parent).resolve()
+    if parent_path == config_path.resolve():
+        raise ValueError("Generator config cannot extend itself")
+    return _merge_config(_load_config_with_extends(parent_path), config)
 
 
 def _default_generator_args() -> argparse.Namespace:
@@ -1489,6 +1762,7 @@ def _default_generator_args() -> argparse.Namespace:
         relative_to=[None],
         relative_position_kpc=[None],
         relative_velocity_kms=[None],
+        relative_orbit_mode=["stable"],
         xs=None,
         ys=None,
         zs=None,
@@ -1537,6 +1811,8 @@ def _default_generator_args() -> argparse.Namespace:
         nR_grid=256,
         nz_grid=256,
         eps_grid=0.1,
+        dm_softening_kpc=None,
+        baryon_softening_kpc=None,
         h_max_cell_fraction=0.5,
         scheduler_tasks_per_cell=100,
         max_top_level_cells=16,
@@ -1673,6 +1949,8 @@ def main():
         dt_min_gyr=args.dt_min_gyr,
         dt_max_gyr=args.max_timestep_gyr,
         softening_kpc=args.eps_grid,
+        dm_softening_kpc=args.dm_softening_kpc,
+        baryon_softening_kpc=args.baryon_softening_kpc,
         output_basename=args.snapshot_basename,
         run_name=args.run_name,
         param_template=args.param_template,

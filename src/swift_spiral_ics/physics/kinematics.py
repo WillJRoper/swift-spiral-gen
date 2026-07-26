@@ -1,7 +1,6 @@
 import numpy as np
 import unyt
-from scipy.integrate import quad
-from tqdm import tqdm
+from scipy.ndimage import gaussian_filter1d
 
 from .constants import G, k_B, m_p
 
@@ -132,36 +131,20 @@ def jeans_dispersion_spherical_from_grid(
     # FR = -dPhi/dR, for spherical system, this is F_r
     Fr_prof_total = grid_solver.get_spherical_force_profile(r_prof_grid)
 
-    # Integrand for Jeans equation: rho_comp(r') * |F_r(r')|
-    # F_r from grid_solver is the physical radial force component
-    # It should be negative (inward) for attractive gravity.
-
-    def integrand(r_prime_val):
-        rho_at_r_prime = np.interp(r_prime_val, r_prof_grid, rho_comp_prof, left=0, right=0)
-        Fr_at_r_prime = np.interp(r_prime_val, r_prof_grid, Fr_prof_total, left=0, right=0)
-
-        return rho_at_r_prime * np.abs(Fr_at_r_prime) # Force magnitude
+    # Smooth particle shot noise before integrating the Jeans pressure equation.
+    rho_comp_prof = gaussian_filter1d(np.maximum(rho_comp_prof, 0.0), sigma=2.0)
+    force_magnitude = np.abs(Fr_prof_total)
+    anisotropy_weight = np.maximum(r_prof_grid, r_min_prof) ** (2.0 * beta)
+    integrand = rho_comp_prof * force_magnitude * anisotropy_weight
+    shell_integrals = 0.5 * (integrand[:-1] + integrand[1:]) * np.diff(r_prof_grid)
+    pressure = np.zeros_like(r_prof_grid)
+    pressure[:-1] = np.cumsum(shell_integrals[::-1])[::-1]
 
     sigma_r_sq_prof_grid = np.zeros_like(r_prof_grid)
-
-    for i, r_val in enumerate(tqdm(r_prof_grid, desc="Solving Jeans (Grid) for component")):
-        # Ensure r_val is not too small
-        r_safe = np.maximum(r_val, r_min_prof)
-
-        rho_comp_r = np.interp(r_safe, r_prof_grid, rho_comp_prof, left=0, right=0)
-
-        # Integrate from r to large distance
-        # Use a large upper bound, but ensure it's within range of Fr_prof_total
-        r_max_integration = r_prof_grid[-1]
-
-        if rho_comp_r > 0:
-            integral_val, _ = quad(
-                integrand, r_safe, r_max_integration,
-                args=() # No args needed as integrand uses closure
-            )
-            sigma_r_sq_prof_grid[i] = (1.0 - beta) * integral_val / rho_comp_r
-        else:
-            sigma_r_sq_prof_grid[i] = 0.0
+    valid = rho_comp_prof > np.max(rho_comp_prof) * 1.0e-12
+    sigma_r_sq_prof_grid[valid] = pressure[valid] / (
+        rho_comp_prof[valid] * anisotropy_weight[valid]
+    )
 
     sigma_r_sq = np.interp(r_coords, r_prof_grid, sigma_r_sq_prof_grid, left=0, right=0)
     sigma_r_sq = np.maximum(sigma_r_sq, 0.0)

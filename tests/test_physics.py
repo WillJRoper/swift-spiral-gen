@@ -33,6 +33,16 @@ class TestProfiles:
         assert np.all(rho > 0)
         assert np.all(np.isfinite(rho))
 
+    def test_nfw_density_integrates_to_m200(self):
+        m200 = 1.0e12
+        c200 = 10.0
+        r_s, delta_c = profiles.nfw_params(m200, c200)
+        radius = np.geomspace(1.0e-6 * r_s, c200 * r_s, 10000)
+        density = profiles.nfw_density(radius, m200, c200, delta_c, r_s)
+        integrated_mass = np.trapezoid(4.0 * np.pi * radius**2 * density, radius)
+
+        assert np.isclose(integrated_mass, m200, rtol=1.0e-4)
+
     def test_hernquist_mass_enclosed(self):
         """Test Hernquist enclosed mass at infinity equals total mass."""
         m_bulge = 1e10

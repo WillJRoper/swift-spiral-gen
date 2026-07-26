@@ -82,14 +82,16 @@ grid:
   nR: 128
   nz: 128
 
-  # Also used as the gravity softening length written into the SWIFT YAML.
-  eps_kpc: 0.8
+  # Potential-grid smoothing and separate SWIFT gravity softenings. Baryonic
+  # softening must remain below the configured disc scale heights.
+  eps_kpc: 0.1
+  dm_softening_kpc: 0.5
+  baryon_softening_kpc: 0.15
 
   # Scheduler/domain controls in the generated SWIFT YAML. With this 2.5 Mpc box
-  # and 16 top-level cells, 0.25 gives h_max = 39.06 kpc. The low-density gas
-  # background below should prevent the pathological vacuum smoothing lengths
-  # that made the earlier no-background setup fail.
-  h_max_cell_fraction: 0.25
+  # and 16 top-level cells, 0.8 gives h_max = 125 kpc, enough for the sparse
+  # background particles (mean spacing ~100 kpc) to find neighbours.
+  h_max_cell_fraction: 0.8
   scheduler_tasks_per_cell: 100
   max_top_level_cells: 16
 
@@ -244,8 +246,8 @@ galaxies:
       # present without using the high-speed present-day first-infall velocity,
       # which simply flies away in this isolated idealized setup.
       relative_to: Milky Way
-      relative_position_kpc: [-1, -41, -28]
-      relative_velocity_kms: [-32, -99, 147]
+      relative_position_kpc: [-2, -99, -68]
+      relative_velocity_kms: [-30, -95, 141]
       inclination_deg: 35
       node_angle_deg: 130
 
@@ -282,7 +284,7 @@ galaxies:
     placement:
       # Bound SMC test orbit around the LMC, not an independent MW satellite.
       relative_to: LMC
-      relative_position_kpc: [16, 3, -16]
-      relative_velocity_kms: [16, 62, 28]
+      relative_position_kpc: [25, 5, -24]
+      relative_velocity_kms: [15, 58, 26]
       inclination_deg: 45
       node_angle_deg: 45

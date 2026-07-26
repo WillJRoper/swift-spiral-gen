@@ -45,6 +45,8 @@ def generate_swift_params(
     dt_min_gyr: float = 1e-5,
     dt_max_gyr: float | None = None,
     softening_kpc: float = 0.1,
+    dm_softening_kpc: float | None = None,
+    baryon_softening_kpc: float | None = None,
     output_basename: str = "snapshot",
     run_name: str | None = None,
     param_template: str = "eagle_ref_cosmo",
@@ -61,7 +63,12 @@ def generate_swift_params(
     snapshot_dt_internal = (snapshot_dt_myr / 1000.0) / _GYR_PER_INTERNAL_TIME
     dt_min_internal = dt_min_gyr / _GYR_PER_INTERNAL_TIME
     # Softening now in Mpc
-    softening_mpc_val = softening_kpc / 1000.0
+    dm_softening_mpc = (
+        softening_kpc if dm_softening_kpc is None else dm_softening_kpc
+    ) / 1000.0
+    baryon_softening_mpc = (
+        softening_kpc if baryon_softening_kpc is None else baryon_softening_kpc
+    ) / 1000.0
     dt_max_gyr = min(dt_max_gyr if dt_max_gyr is not None else time_end_gyr, time_end_gyr)
     dt_max_internal = dt_max_gyr / _GYR_PER_INTERNAL_TIME
 
@@ -163,7 +170,8 @@ def generate_swift_params(
         "__DT_MIN_GYR__": f"{dt_min_internal}",
         "__DT_MAX_GYR__": f"{dt_max_internal}",
         "__TIME_END__": f"{time_end_internal}",
-        "__SOFTENING__": f"{softening_mpc_val}",
+        "__DM_SOFTENING__": f"{dm_softening_mpc}",
+        "__BARYON_SOFTENING__": f"{baryon_softening_mpc}",
     }
 
     for token, value in replacements.items():

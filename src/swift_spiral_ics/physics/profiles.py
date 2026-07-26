@@ -19,7 +19,7 @@ def nfw_density(r: np.ndarray, m200: float, c200: float, delta_c: float, r_s: fl
         Density at each position (Msun/kpc^3).
     """
     x = r / r_s
-    rho_0 = delta_c * 200.0 * critical_density() / 3.0
+    rho_0 = delta_c * critical_density()
     return rho_0 / (x * (1 + x) ** 2)
 
 

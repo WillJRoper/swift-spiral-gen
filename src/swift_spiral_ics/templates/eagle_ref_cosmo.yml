@@ -48,10 +48,10 @@ Gravity:
   theta_cr:                    0.7       # Opening angle (Multipole acceptance criterion)
   epsilon_fmm:                 0.001     # Adaptive opening angle
   mesh_side_length:            512
-  comoving_DM_softening: __SOFTENING__ # Comoving softening for DM (3.32 ckpc)
-  max_physical_DM_softening: __SOFTENING__ # Physical softening for DM (1.30 pkpc)
-  comoving_baryon_softening: __SOFTENING__ # Comoving softening for baryons (1.79 ckpc)
-  max_physical_baryon_softening: __SOFTENING__ # Physical softening for baryons (0.70 pkpc)
+  comoving_DM_softening: __DM_SOFTENING__
+  max_physical_DM_softening: __DM_SOFTENING__
+  comoving_baryon_softening: __BARYON_SOFTENING__
+  max_physical_baryon_softening: __BARYON_SOFTENING__
 
 # Parameters for the hydrodynamics scheme
 SPH:
@@ -61,7 +61,7 @@ SPH:
   CFL_condition:                     0.2      # Courant-Friedrich-Levy condition for time integration.
   minimal_temperature:               100.0    # (internal units)
   initial_temperature:               268.7    # (internal units)
-  particle_splitting:                1        # Particle splitting is ON
+  particle_splitting:                0        # Keep the requested isolated-galaxy resolution fixed
   particle_splitting_mass_threshold: 7e-4     # (internal units, i.e. 7e6 Msun ~ 4x initial gas particle mass)
 
 # Parameters of the stars neighbour search
@@ -75,7 +75,7 @@ FOF:
   basename:                        fof_output  # Filename for the FOF outputs.
   min_group_size:                  256         # The minimum no. of particles required for a group.
   linking_length_ratio:            0.2         # Linking length in units of the main inter-particle separation.
-  seed_black_holes_enabled:        1           # Enable seeding of black holes in FoF groups
+  seed_black_holes_enabled:        0           # Explicit PartType5 SMBHs are supplied in the ICs
   black_hole_seed_halo_mass_Msun:  1.0e10      # Minimal halo mass in which to seed a black hole (in solar masses).
   scale_factor_first:              0.05        # Scale-factor of first FoF black hole seeding calls.
   delta_time:                      1.00751     # Scale-factor ratio between consecutive FoF black hole seeding calls.

@@ -95,6 +95,7 @@ def sample_nfw_halo(
     c200: float,
     r_max: float,
     rng: np.random.Generator,
+    taper_start_fraction: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sample particle positions for NFW halo.
 
@@ -132,11 +133,22 @@ def sample_nfw_halo(
     cdf_grid = cdf_grid - cdf_grid[0] # Shift so it starts at 0 relative to r_min
     cdf_grid = cdf_grid / cdf_grid[-1] # Normalize to 1
 
-    # Sample uniform random numbers
-    u = rng.uniform(0, 1, N)
-
-    # Interpolate to get radii
-    r = np.interp(u, cdf_grid, r_grid)
+    if taper_start_fraction is None:
+        r = np.interp(rng.uniform(0, 1, N), cdf_grid, r_grid)
+    else:
+        if not 0.0 < taper_start_fraction < 1.0:
+            raise ValueError("taper_start_fraction must lie between zero and one")
+        accepted = []
+        while sum(len(batch) for batch in accepted) < N:
+            batch_size = max(1024, N - sum(len(batch) for batch in accepted))
+            candidate = np.interp(rng.uniform(0, 1, batch_size), cdf_grid, r_grid)
+            taper_x = (candidate - taper_start_fraction * r_max) / (
+                (1.0 - taper_start_fraction) * r_max
+            )
+            taper_x = np.clip(taper_x, 0.0, 1.0)
+            acceptance = 1.0 - taper_x**2 * (3.0 - 2.0 * taper_x)
+            accepted.append(candidate[rng.uniform(0.0, 1.0, batch_size) < acceptance])
+        r = np.concatenate(accepted)[:N]
 
     # Random angles
     theta = np.arccos(rng.uniform(-1, 1, N))
