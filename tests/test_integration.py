@@ -13,11 +13,14 @@ import yaml
 from swift_spiral_ics.cli.generate import (
     _apply_config_file,
     _default_generator_args,
+    _galaxy_potential_grids,
     _hydrostatic_disc_internal_energy,
     _normalise_per_galaxy_args,
     _remove_disc_streaming_modes,
+    _represented_halo_mass_msun,
     _resolve_galaxy_placement,
     _rotate_disc_orientation,
+    _satellite_tidal_radius_kpc,
     _validate_host_relative_satellite_orbits,
 )
 from swift_spiral_ics.physics.sampling import (
@@ -408,11 +411,35 @@ class TestFullPipeline:
         assert args.black_hole_mass_msun == [4.3e6, 1.4e8, 0.0, 0.0]
         assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 780.0)
         assert np.allclose(velocities[1] - velocities[0], [-110.0, 17.0, 0.0])
-        assert np.allclose(positions[2] - positions[0], [-1.0, -41.0, -28.0])
-        assert np.allclose(positions[3] - positions[0], [15.0, -38.0, -44.0])
-        assert np.allclose(velocities[2] - velocities[0], [-32.0, -99.0, 147.0])
-        assert np.allclose(velocities[3] - velocities[2], [16.0, 62.0, 28.0])
+        assert np.allclose(positions[2] - positions[0], [-2.0, -99.0, -68.0])
+        assert np.allclose(positions[3] - positions[2], [25.0, 5.0, -24.0])
+        assert np.allclose(velocities[2] - velocities[0], [-30.0, -95.0, 141.0])
+        assert np.allclose(velocities[3] - velocities[2], [15.0, 58.0, 26.0])
+        assert _satellite_tidal_radius_kpc(args, 2) > 4.0 * args.gas_disk_scale_length_kpc[2]
+        assert _satellite_tidal_radius_kpc(args, 3) > 4.0 * args.gas_disk_scale_length_kpc[3]
         assert np.all(np.isfinite(velocities))
+
+    def test_local_group_grids_resolve_disc_scale_heights(self):
+        config_file = Path(__file__).parents[1] / "examples" / "mw_m31_merger.yml"
+        args = _apply_config_file(_default_generator_args(), str(config_file))
+        _normalise_per_galaxy_args(args)
+
+        radius_grid, vertical_grid = _galaxy_potential_grids(args, 0, 220.0)
+        center = len(vertical_grid) // 2
+
+        assert radius_grid[1] - radius_grid[0] < args.stellar_disk_scale_height_kpc[0]
+        assert vertical_grid[center + 1] - vertical_grid[center] < args.gas_disk_scale_height_kpc[0]
+
+    def test_satellite_halo_mass_matches_tapered_representation(self):
+        config_file = Path(__file__).parents[1] / "examples" / "mw_m31_merger.yml"
+        args = _apply_config_file(_default_generator_args(), str(config_file))
+        _normalise_per_galaxy_args(args)
+
+        assert _represented_halo_mass_msun(args, 2) < args.m200_msun[2]
+        assert _represented_halo_mass_msun(args, 3) < args.m200_msun[3]
+        assert args.n_halo[2] == round(
+            _represented_halo_mass_msun(args, 2) / args.dm_part_mass_msun
+        )
 
     def test_host_relative_satellite_orbits_reject_fast_flybys(self):
         """Host-relative satellite examples should be bound test orbits, not flybys."""
@@ -427,12 +454,47 @@ class TestFullPipeline:
         with pytest.raises(ValueError, match="too fast"):
             _validate_host_relative_satellite_orbits(args)
 
+    def test_observed_local_group_variant_inherits_stable_structures(self):
+        """Observed phase-space overrides inherit the controlled structural model."""
+
+        config_file = Path(__file__).parents[1] / "examples" / "mw_m31_local_group_observed.yml"
+        args = _apply_config_file(_default_generator_args(), str(config_file))
+        _normalise_per_galaxy_args(args)
+        positions, velocities = _resolve_galaxy_placement(args)
+
+        assert args.galaxy_names == ["Milky Way", "Andromeda", "LMC", "SMC"]
+        assert np.allclose(positions[2] - positions[0], [-1.0, -41.0, -28.0])
+        assert np.allclose(positions[3] - positions[2], [16.0, 3.0, -16.0])
+        assert np.allclose(velocities[2] - velocities[0], [-57.0, -226.0, 221.0])
+        assert args.relative_orbit_mode[2:] == ["observed_infall", "observed_infall"]
+
+    @pytest.mark.parametrize(
+        ("filename", "galaxy_name"),
+        [
+            ("validate_mw_isolated.yml", "Milky Way"),
+            ("validate_m31_isolated.yml", "Andromeda"),
+            ("validate_lmc_isolated.yml", "LMC"),
+            ("validate_smc_isolated.yml", "SMC"),
+        ],
+    )
+    def test_isolated_validation_configs_select_one_galaxy(self, filename, galaxy_name):
+        config_file = Path(__file__).parents[1] / "examples" / filename
+        args = _apply_config_file(_default_generator_args(), str(config_file))
+        _normalise_per_galaxy_args(args)
+
+        assert args.n_galaxies == 1
+        assert args.galaxy_names == [galaxy_name]
+        assert args.orbit == "manual"
+
     def test_mw_m31_resolution_example_configs_parse(self):
         """Resolution variants keep the same setup with finer particle masses."""
         examples = {
             "mw_m31_merger_10x.yml": (1.0e6, 1.0e5, 1.0e5),
             "mw_m31_merger_100x.yml": (1.0e5, 1.0e4, 1.0e4),
             "mw_m31_merger_1000x.yml": (1.0e4, 1.0e3, 1.0e3),
+            "mw_m31_local_group_observed_10x.yml": (1.0e6, 1.0e5, 1.0e5),
+            "mw_m31_local_group_observed_100x.yml": (1.0e5, 1.0e4, 1.0e4),
+            "mw_m31_local_group_observed_1000x.yml": (1.0e4, 1.0e3, 1.0e3),
         }
 
         for filename, particle_masses in examples.items():

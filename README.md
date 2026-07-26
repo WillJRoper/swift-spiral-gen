@@ -37,7 +37,7 @@ pip install -e .
 swift-spiral-ics examples/mw_m31_merger.yml
 ```
 
-This writes `mw_m31_merger.hdf5` and `mw_m31_merger.yml` using a low-resolution parabolic encounter with baryonic particle masses of `1e6 Msun` and coarser `1e7 Msun` dark matter particles.
+This writes `mw_m31_merger.hdf5` and `mw_m31_merger.yml` using the controlled present-separation encounter with baryonic particle masses of `1e6 Msun` and coarser `1e7 Msun` dark matter particles.
 
 ### Visualize initial conditions
 
@@ -128,6 +128,32 @@ If omitted or set to `0`, no explicit black hole is written for that galaxy. Whe
 - `galaxies[].cgm.temperature_ceiling_K`: upper bound for hydrostatic temperature
 
 The CGM sampler uses a spherical beta-profile-like density law and assigns the galaxy bulk velocity. Internal energies are computed from hydrostatic balance in a sphericalized halo+bulge+disc+black-hole potential, then clipped to the configured temperature floor/ceiling to avoid unphysical extremes from the idealized model.
+
+### Stability Validation
+
+The Local Group examples have two distinct purposes:
+
+- `examples/mw_m31_merger.yml` is the controlled merger with tidally limited satellites on stable test orbits.
+- `examples/mw_m31_local_group_observed.yml` uses observed-like LMC/SMC phase space. Magellanic stripping and orbital decay are expected in this first-infall setup.
+
+Generate and evolve each isolated acceptance model before a production merger:
+
+```bash
+swift-spiral-ics examples/validate_mw_isolated.yml
+swift-spiral-ics examples/validate_m31_isolated.yml
+swift-spiral-ics examples/validate_lmc_isolated.yml
+swift-spiral-ics examples/validate_smc_isolated.yml
+```
+
+Compare an evolved snapshot to its IC with an aperture centred on the galaxy:
+
+```bash
+swift-spiral-ics-validate validate_mw_isolated.hdf5 validate_mw_snapshot_0040.hdf5 \
+  --component stars --initial-center-kpc 400 400 400 --final-center-kpc 400 400 400 \
+  --aperture-kpc 50
+```
+
+The validator exits non-zero if mass, half-mass radius, scale height, or specific angular momentum drift beyond the configured tolerances.
 
 ### Multi-Galaxy Placement
 
@@ -293,14 +319,14 @@ Includes complete SWIFT configuration with:
 - EAGLE chemistry and cooling
 - Star formation (pressure law)
 - Stellar feedback
-- SPINJETAGN black hole seeding and feedback
+- explicit IC black holes and EAGLE-XL AGN feedback
 
 ## Running SWIFT
 
 After generating ICs:
 
 ```bash
-swift --hydro --self-gravity --stars --feedback --threads=16 mw_m31_merger.yml
+swift --eagle --threads=16 mw_m31_merger.yml
 ```
 
 ## Testing
@@ -322,7 +348,27 @@ Tests cover:
 
 Reusable generator configs live in `examples/`:
 
-- `examples/mw_m31_merger.yml`: low-resolution Milky Way-Andromeda-like parabolic merger
+- `mw_m31_merger*.yml`: controlled merger with stable test orbits for the LMC/SMC.
+- `mw_m31_local_group_observed*.yml`: observed-like LMC/SMC first-infall phase space.
+- `validate_*_isolated.yml`: 2 Gyr isolated acceptance models.
+
+### Production Matrix
+
+| Suffix | DM mass | Star/gas mass | Approx. particles | Intended use |
+|---|---:|---:|---:|---|
+| none | `1e7 Msun` | `1e6 Msun` | `4.8e5` | smoke/debug only |
+| `_10x` | `1e6 Msun` | `1e5 Msun` | `4.8e6` | minimum production |
+| `_100x` | `1e5 Msun` | `1e4 Msun` | `4.8e7` | recommended fiducial |
+| `_1000x` | `1e4 Msun` | `1e3 Msun` | `4.8e8` | flagship/convergence |
+
+For the cleanest MW-M31 merger morphology use `mw_m31_merger_100x.yml`. For the
+closest present-day four-galaxy phase-space analogue use
+`mw_m31_local_group_observed_100x.yml`; disruption and decay of the Magellanic
+Clouds are expected in that setup.
+
+The local 20 Myr MW acceptance run takes about two minutes. A 1 Gyr run therefore
+requires roughly 1.5-2 hours on the tested eight-thread desktop and should normally
+be submitted to the HPC. The supplied isolated configs already run for 2 Gyr.
 
 ## License
 

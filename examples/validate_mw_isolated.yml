@@ -1,0 +1,15 @@
+extends: mw_m31_merger.yml
+select_galaxies: [Milky Way]
+output:
+  ics: validate_mw_isolated.hdf5
+  params: validate_mw_isolated.yml
+  run_name: validate_mw_isolated
+  snapshot_basename: validate_mw_snapshot
+orbit:
+  type: manual
+simulation:
+  box_kpc: 800
+  time_end_gyr: 2.0
+  snapshot_dt_myr: 50
+grid:
+  max_top_level_cells: 4

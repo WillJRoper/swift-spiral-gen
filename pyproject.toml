@@ -51,6 +51,7 @@ dev = [
 swift-spiral-ics = "swift_spiral_ics.cli.generate:main"
 swift-spiral-ics-viz = "swift_spiral_ics.cli.visualize:main"
 swift-spiral-movie = "swift_spiral_ics.cli.movie:main"
+swift-spiral-ics-validate = "swift_spiral_ics.cli.validate:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

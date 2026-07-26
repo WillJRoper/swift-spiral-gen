@@ -79,7 +79,10 @@ Particles are sampled using inverse CDF method:
 2. Solve M(<r)/M_total = u for r
 3. Sample angles uniformly on sphere
 
-**Truncation**: The halo is truncated at r_max = 10×rₛ to avoid infinite extent.
+**Truncation**: Isolated primary halos extend to `r200`. Host-relative satellites
+are limited by an iterated Jacobi radius and tapered smoothly over the outermost
+20% of the represented halo. Particle masses sum to the tapered enclosed mass,
+not the pre-infall `M200`.
 
 ---
 
@@ -181,7 +184,10 @@ For each component, we compute the Miyamoto-Nagai or direct potential, then:
 v_c²(R) = R × dΦ_total/dR |_{z=0}
 ```
 
-The derivative is computed numerically using finite differences.
+The derivative is computed from a per-galaxy axisymmetric ring potential. The
+radial and vertical grids use quadratic coordinates, resolving the sub-kpc disc
+while extending through the halo or CGM; they are independent of the simulation
+box size.
 
 ### Toomre Q Stability
 
@@ -235,6 +241,19 @@ For halo and bulge, we use the spherical Jeans equation with isotropic velocitie
 ```
 σ_r² = (1/ρ) ∫_r^∞ ρ(r') G M(<r') / r'² dr'
 ```
+
+The pressure integral is evaluated cumulatively from the outer boundary after
+smoothing particle shot noise in the sampled density profile. This avoids a
+separate adaptive quadrature at every radius and gives a consistent zero-pressure
+boundary for tapered halos.
+
+### Finite-Particle Disc Equilibrium
+
+After sampling stellar velocities, annular means and dispersions are iteratively
+matched to the axisymmetric Jeans/epicyclic target. This removes finite-particle
+radial and vertical streaming modes. It is still a moment-based equilibrium model,
+not an exact action-based distribution function; evolved-snapshot validation is
+therefore required for production ICs.
 
 **Simplified local approximation:**
 ```

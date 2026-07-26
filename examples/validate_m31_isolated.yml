@@ -1,0 +1,15 @@
+extends: mw_m31_merger.yml
+select_galaxies: [Andromeda]
+output:
+  ics: validate_m31_isolated.hdf5
+  params: validate_m31_isolated.yml
+  run_name: validate_m31_isolated
+  snapshot_basename: validate_m31_snapshot
+orbit:
+  type: manual
+simulation:
+  box_kpc: 900
+  time_end_gyr: 2.0
+  snapshot_dt_myr: 50
+grid:
+  max_top_level_cells: 4

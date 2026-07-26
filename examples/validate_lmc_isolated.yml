@@ -1,0 +1,15 @@
+extends: mw_m31_merger.yml
+select_galaxies: [LMC]
+output:
+  ics: validate_lmc_isolated.hdf5
+  params: validate_lmc_isolated.yml
+  run_name: validate_lmc_isolated
+  snapshot_basename: validate_lmc_snapshot
+orbit:
+  type: manual
+simulation:
+  box_kpc: 400
+  time_end_gyr: 2.0
+  snapshot_dt_myr: 50
+grid:
+  max_top_level_cells: 4

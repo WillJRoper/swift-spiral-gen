@@ -1,0 +1,29 @@
+# Present-day-like Local Group phase-space variant.
+#
+# This inherits the internally stable MW/M31/LMC/SMC structures from
+# mw_m31_merger.yml but restores observed-like Magellanic Cloud phase space.
+# The LMC is on first infall and the SMC is interacting with it; stripping and
+# merger with the MW are expected physical outcomes, not IC instability.
+
+extends: mw_m31_merger.yml
+
+output:
+  ics: mw_m31_local_group_observed.hdf5
+  params: mw_m31_local_group_observed.yml
+  run_name: mw_m31_local_group_observed
+  snapshot_basename: snapshot
+
+galaxies:
+  - name: LMC
+    placement:
+      relative_to: Milky Way
+      relative_position_kpc: [-1, -41, -28]
+      relative_velocity_kms: [-57, -226, 221]
+      orbit_mode: observed_infall
+
+  - name: SMC
+    placement:
+      relative_to: LMC
+      relative_position_kpc: [16, 3, -16]
+      relative_velocity_kms: [76, 52, -48]
+      orbit_mode: observed_infall
