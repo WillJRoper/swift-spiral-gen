@@ -1,0 +1,99 @@
+# Observed Local Group setup with opt-in present-day stellar populations.
+# Ages are measured at the start of this non-cosmological run. Negative
+# StellarFormationTime values are therefore expected and are not SWIFT's exact
+# -1 inactive-star sentinel.
+extends: mw_m31_local_group_observed.yml
+
+output:
+  ics: mw_m31_local_group_observed_seeded.hdf5
+  params: mw_m31_local_group_observed_seeded_params.yml
+  run_name: mw_m31_local_group_observed_seeded
+
+galaxies:
+  - name: Milky Way
+    stellar_population:
+      enabled: true
+      disc:
+        age_mean_gyr: 6.0
+        age_sigma_gyr: 3.0
+        age_min_gyr: 0.01
+        age_max_gyr: 12.5
+        metallicity_feh_centre: 0.2
+        metallicity_gradient_dex_kpc: -0.05
+        metallicity_age_slope_dex_gyr: -0.035
+        metallicity_scatter_dex: 0.15
+        snia_iron_fraction: 0.5
+      bulge:
+        age_mean_gyr: 10.5
+        age_sigma_gyr: 1.5
+        age_min_gyr: 7.0
+        age_max_gyr: 13.0
+        metallicity_feh_centre: 0.1
+        metallicity_gradient_dex_kpc: -0.02
+        metallicity_age_slope_dex_gyr: -0.02
+        metallicity_scatter_dex: 0.2
+        snia_iron_fraction: 0.6
+
+  - name: Andromeda
+    stellar_population:
+      enabled: true
+      disc:
+        age_mean_gyr: 7.0
+        age_sigma_gyr: 3.0
+        age_min_gyr: 0.01
+        age_max_gyr: 13.0
+        metallicity_feh_centre: 0.25
+        metallicity_gradient_dex_kpc: -0.025
+        metallicity_age_slope_dex_gyr: -0.035
+        metallicity_scatter_dex: 0.17
+        snia_iron_fraction: 0.5
+      bulge:
+        age_mean_gyr: 11.0
+        age_sigma_gyr: 1.3
+        age_min_gyr: 8.0
+        age_max_gyr: 13.2
+        metallicity_feh_centre: 0.15
+        metallicity_gradient_dex_kpc: -0.015
+        metallicity_age_slope_dex_gyr: -0.02
+        metallicity_scatter_dex: 0.2
+        snia_iron_fraction: 0.6
+
+  - name: LMC
+    stellar_population:
+      enabled: true
+      disc:
+        age_mean_gyr: 4.5
+        age_sigma_gyr: 3.0
+        age_min_gyr: 0.01
+        age_max_gyr: 12.5
+        metallicity_feh_centre: -0.2
+        metallicity_gradient_dex_kpc: -0.04
+        metallicity_age_slope_dex_gyr: -0.04
+        metallicity_scatter_dex: 0.2
+        snia_iron_fraction: 0.45
+      bulge:
+        age_mean_gyr: 8.0
+        age_sigma_gyr: 2.0
+        age_min_gyr: 3.0
+        age_max_gyr: 12.5
+        metallicity_feh_centre: -0.3
+
+  - name: SMC
+    stellar_population:
+      enabled: true
+      disc:
+        age_mean_gyr: 4.0
+        age_sigma_gyr: 3.0
+        age_min_gyr: 0.01
+        age_max_gyr: 12.5
+        metallicity_feh_centre: -0.45
+        metallicity_gradient_dex_kpc: -0.05
+        metallicity_age_slope_dex_gyr: -0.04
+        metallicity_scatter_dex: 0.22
+        snia_iron_fraction: 0.45
+      bulge:
+        age_mean_gyr: 8.0
+        age_sigma_gyr: 2.0
+        age_min_gyr: 3.0
+        age_max_gyr: 12.5
+        metallicity_feh_centre: -0.5

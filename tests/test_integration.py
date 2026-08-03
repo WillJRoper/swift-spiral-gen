@@ -20,6 +20,7 @@ from swift_spiral_ics.cli.generate import (
     _represented_halo_mass_msun,
     _resolve_galaxy_placement,
     _rotate_disc_orientation,
+    _sample_stellar_population,
     _satellite_tidal_radius_kpc,
     _validate_host_relative_satellite_orbits,
 )
@@ -72,6 +73,78 @@ def _run_generator(config: dict, tmpdir: str) -> subprocess.CompletedProcess:
 
 class TestFullPipeline:
     """Test complete IC generation pipeline."""
+
+    def test_stellar_population_sampling_is_deterministic_and_physical(self):
+        population = {
+            "age_mean_gyr": 6.0,
+            "age_sigma_gyr": 2.0,
+            "age_min_gyr": 0.1,
+            "age_max_gyr": 12.0,
+            "metallicity_feh_centre": 0.1,
+            "metallicity_gradient_dex_kpc": -0.05,
+            "metallicity_age_slope_dex_gyr": -0.03,
+            "metallicity_scatter_dex": 0.1,
+            "snia_iron_fraction": 0.5,
+        }
+        positions = np.column_stack([np.linspace(0, 10, 64), np.zeros((64, 2))])
+
+        first = _sample_stellar_population(positions, population, get_rng(7))
+        second = _sample_stellar_population(positions, population, get_rng(7))
+
+        for key in first:
+            assert np.array_equal(first[key], second[key])
+        assert np.all(first["formation_time"] < 0.0)
+        assert not np.any(first["formation_time"] == -1.0)
+        assert np.all((first["metallicity"] >= 1.0e-4) & (first["metallicity"] <= 0.04))
+        assert first["element_abundance"].shape == (64, 9)
+        assert np.all(np.sum(first["element_abundance"][:, 2:], axis=1) <= first["metallicity"])
+        assert np.all(
+            first["iron_mass_fraction_from_snia"] <= first["element_abundance"][:, 8]
+        )
+
+    def test_seeded_population_survives_full_generation_pipeline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "seeded.hdf5"
+            params_file = Path(tmpdir) / "seeded.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["galaxies"][0]["stellar_population"] = {
+                "enabled": True,
+                "disc": {
+                    "age_mean_gyr": 6.0,
+                    "age_sigma_gyr": 2.0,
+                    "age_min_gyr": 0.1,
+                    "age_max_gyr": 12.0,
+                    "metallicity_feh_centre": 0.0,
+                    "metallicity_gradient_dex_kpc": -0.05,
+                    "metallicity_scatter_dex": 0.1,
+                },
+            }
+
+            result = _run_generator(config, tmpdir)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                stars = f["PartType4"]
+                assert np.all(stars["StellarFormationTime"][:] < 0.0)
+                assert not np.any(stars["StellarFormationTime"][:] == -1.0)
+                assert np.all(stars["Metallicity"][:] > 0.0)
+                assert stars["ElementAbundance"].shape[1] == 9
+
+    def test_zero_star_model_survives_full_generation_pipeline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "gas_only.hdf5"
+            params_file = Path(tmpdir) / "gas_only.yml"
+            config = _tiny_galaxy_config(ic_file, params_file)
+            config["galaxies"][0]["masses"]["stars_msun"] = 0.0
+            config["galaxies"][0]["masses"]["gas_msun"] = 2.0e8
+
+            result = _run_generator(config, tmpdir)
+
+            assert result.returncode == 0, result.stderr
+            with h5py.File(ic_file, "r") as f:
+                assert "PartType4" not in f
+                assert f["Header"].attrs["NumPart_Total"][4] == 0
+                assert np.isclose(np.sum(f["PartType0/Masses"][:]) * 1.0e10, 2.0e8)
 
     def test_node_angle_orientation_rotates_disc_frame(self):
         """Disc orientation supports both node angle and inclination rotations."""
@@ -495,6 +568,12 @@ class TestFullPipeline:
             "mw_m31_local_group_observed_10x.yml": (1.0e6, 1.0e5, 1.0e5),
             "mw_m31_local_group_observed_100x.yml": (1.0e5, 1.0e4, 1.0e4),
             "mw_m31_local_group_observed_1000x.yml": (1.0e4, 1.0e3, 1.0e3),
+            "mw_m31_local_group_observed_seeded_10x.yml": (1.0e6, 1.0e5, 1.0e5),
+            "mw_m31_local_group_observed_seeded_100x.yml": (1.0e5, 1.0e4, 1.0e4),
+            "mw_m31_local_group_observed_seeded_1000x.yml": (1.0e4, 1.0e3, 1.0e3),
+            "mw_m31_local_group_observed_gas_only_10x.yml": (1.0e6, 1.0e5, 1.0e5),
+            "mw_m31_local_group_observed_gas_only_100x.yml": (1.0e5, 1.0e4, 1.0e4),
+            "mw_m31_local_group_observed_gas_only_1000x.yml": (1.0e4, 1.0e3, 1.0e3),
         }
 
         for filename, particle_masses in examples.items():
@@ -511,6 +590,25 @@ class TestFullPipeline:
             assert args.orbit == "relative_velocity"
             assert np.isclose(np.linalg.norm(positions[1] - positions[0]), 780.0)
             assert np.allclose(velocities[1] - velocities[0], [-110.0, 17.0, 0.0])
+
+    def test_observed_population_variants_select_expected_baryons(self):
+        examples = Path(__file__).parents[1] / "examples"
+        seeded = _apply_config_file(
+            _default_generator_args(),
+            str(examples / "mw_m31_local_group_observed_seeded.yml"),
+        )
+        _normalise_per_galaxy_args(seeded)
+        assert all(population["enabled"] for population in seeded.stellar_populations)
+        assert seeded.m_star_msun == [5.1e10, 7.107e10, 2.7e9, 4.5e8]
+
+        gas_only = _apply_config_file(
+            _default_generator_args(),
+            str(examples / "mw_m31_local_group_observed_gas_only.yml"),
+        )
+        _normalise_per_galaxy_args(gas_only)
+        assert gas_only.m_star_msun == [0.0, 0.0, 0.0, 0.0]
+        assert gas_only.m_bulge_msun == [0.0, 0.0, 0.0, 0.0]
+        assert gas_only.m_gas_msun == [7.2e10, 1.10e11, 3.2e9, 8.5e8]
 
     def test_multi_galaxy_positions_must_lie_inside_box(self):
         """Out-of-box galaxy coordinates are rejected."""

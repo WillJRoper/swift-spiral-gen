@@ -1,0 +1,13 @@
+extends: mw_m31_local_group_observed_gas_only.yml
+output:
+  ics: mw_m31_local_group_observed_gas_only_10x.hdf5
+  params: mw_m31_local_group_observed_gas_only_10x_params.yml
+  run_name: mw_m31_local_group_observed_gas_only_10x
+particle_masses:
+  dm_msun: 1.0e6
+  stars_msun: 1.0e5
+  gas_msun: 1.0e5
+grid:
+  eps_kpc: 0.05
+  dm_softening_kpc: 0.25
+  baryon_softening_kpc: 0.08

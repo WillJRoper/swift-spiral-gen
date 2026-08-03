@@ -1,0 +1,13 @@
+extends: mw_m31_local_group_observed_seeded.yml
+output:
+  ics: mw_m31_local_group_observed_seeded_1000x.hdf5
+  params: mw_m31_local_group_observed_seeded_1000x_params.yml
+  run_name: mw_m31_local_group_observed_seeded_1000x
+particle_masses:
+  dm_msun: 1.0e4
+  stars_msun: 1.0e3
+  gas_msun: 1.0e3
+grid:
+  eps_kpc: 0.0125
+  dm_softening_kpc: 0.06
+  baryon_softening_kpc: 0.02

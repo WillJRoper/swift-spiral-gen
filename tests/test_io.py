@@ -236,6 +236,32 @@ class TestSwiftWriter:
                 h = f["PartType4/SmoothingLength"][:]
                 assert np.all(h > 0)
 
+    def test_optional_stellar_population_fields_are_written(self):
+        """SWIFT EAGLE stellar population input names are preserved."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "test_ic.hdf5"
+            n_particles = 4
+            particle_data = {
+                "stars": {
+                    "pos": np.arange(12, dtype=float).reshape(4, 3),
+                    "vel": np.zeros((n_particles, 3)),
+                    "mass": np.full(n_particles, 1.0e6),
+                    "formation_time": np.linspace(-0.01, -0.001, n_particles),
+                    "metallicity": np.linspace(0.001, 0.02, n_particles),
+                    "element_abundance": np.full((n_particles, 9), 0.01),
+                    "iron_mass_fraction_from_snia": np.full(n_particles, 0.0005),
+                }
+            }
+
+            write_swift_ic(str(ic_file), 100.0, particle_data)
+
+            with h5py.File(ic_file, "r") as f:
+                stars = f["PartType4"]
+                assert "StellarFormationTime" in stars
+                assert "Metallicity" in stars
+                assert stars["ElementAbundance"].shape == (n_particles, 9)
+                assert "IronMassFracFromSNIa" in stars
+
 
 class TestYamlWriter:
     """Test YAML parameter file writer."""

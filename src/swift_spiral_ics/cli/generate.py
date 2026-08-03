@@ -837,6 +837,17 @@ def generate_galaxy_particles(
         },
     }
 
+    stellar_population = args.stellar_populations[galaxy_id]
+    if stellar_population and stellar_population.get("enabled", False):
+        disc_population = stellar_population.get("disc", {})
+        bulge_population = stellar_population.get("bulge", disc_population)
+        galaxy_data["stars"].update(
+            _sample_stellar_population(pos_star, disc_population, rng)
+        )
+        galaxy_data["bulge"].update(
+            _sample_stellar_population(pos_bulge, bulge_population, rng)
+        )
+
     _validate_generated_galaxy_stability(galaxy_id, galaxy_data, grid_solver)
 
     # Jitter identical positions
@@ -852,6 +863,94 @@ def _component_masses(total_mass: float, n_particles: int) -> np.ndarray:
     if n_particles <= 0:
         return np.empty(0, dtype=float)
     return np.full(n_particles, total_mass / n_particles, dtype=float)
+
+
+_GYR_PER_INTERNAL_TIME = 3.085678e19 / 3.15576e16
+_SOLAR_METALLICITY = 0.0127
+_SOLAR_TRACKED_METALS = np.array(
+    [
+        2.0665436e-3,
+        8.3562563e-4,
+        5.4926244e-3,
+        1.4144605e-3,
+        5.907064e-4,
+        6.825874e-4,
+        1.1032152e-3,
+    ]
+)
+
+
+def _sample_stellar_population(
+    positions: np.ndarray,
+    population: dict,
+    rng: np.random.Generator,
+) -> dict[str, np.ndarray]:
+    """Sample ages and EAGLE chemistry for one stellar component."""
+    n_particles = len(positions)
+    if n_particles == 0:
+        return {
+            "formation_time": np.empty(0),
+            "metallicity": np.empty(0),
+            "element_abundance": np.empty((0, 9)),
+            "iron_mass_fraction_from_snia": np.empty(0),
+        }
+
+    required = (
+        "age_mean_gyr",
+        "age_sigma_gyr",
+        "age_min_gyr",
+        "age_max_gyr",
+        "metallicity_feh_centre",
+    )
+    missing = [key for key in required if key not in population]
+    if missing:
+        raise ValueError(f"stellar_population is missing: {', '.join(missing)}")
+
+    age_mean = float(population["age_mean_gyr"])
+    age_sigma = float(population["age_sigma_gyr"])
+    age_min = float(population["age_min_gyr"])
+    age_max = float(population["age_max_gyr"])
+    if age_sigma < 0.0 or not 0.0 < age_min <= age_max:
+        raise ValueError("stellar_population ages require sigma >= 0 and 0 < min <= max")
+
+    ages = np.clip(rng.normal(age_mean, age_sigma, n_particles), age_min, age_max)
+    formation_time = -ages / _GYR_PER_INTERNAL_TIME
+    if np.any(formation_time == -1.0):
+        raise ValueError("stellar_population produced SWIFT's inactive -1 birth-time sentinel")
+
+    radius = np.linalg.norm(positions, axis=1)
+    feh = (
+        float(population["metallicity_feh_centre"])
+        + float(population.get("metallicity_gradient_dex_kpc", 0.0)) * radius
+        + float(population.get("metallicity_age_slope_dex_gyr", 0.0))
+        * (ages - age_mean)
+    )
+    metallicity_scatter = float(population.get("metallicity_scatter_dex", 0.0))
+    if metallicity_scatter < 0.0:
+        raise ValueError("stellar_population metallicity scatter must be non-negative")
+    feh += rng.normal(0.0, metallicity_scatter, n_particles)
+    metallicity = np.clip(
+        _SOLAR_METALLICITY * 10.0**feh,
+        float(population.get("metallicity_min", 1.0e-4)),
+        float(population.get("metallicity_max", 0.04)),
+    )
+
+    element_abundance = np.empty((n_particles, 9), dtype=float)
+    element_abundance[:, 0] = 0.752 * (1.0 - metallicity)
+    element_abundance[:, 1] = 0.248 * (1.0 - metallicity)
+    element_abundance[:, 2:] = (
+        metallicity[:, None] * _SOLAR_TRACKED_METALS[None, :] / _SOLAR_METALLICITY
+    )
+    snia_fraction = float(population.get("snia_iron_fraction", 0.5))
+    if not 0.0 <= snia_fraction <= 1.0:
+        raise ValueError("stellar_population snia_iron_fraction must lie in [0, 1]")
+
+    return {
+        "formation_time": formation_time,
+        "metallicity": metallicity,
+        "element_abundance": element_abundance,
+        "iron_mass_fraction_from_snia": element_abundance[:, 8] * snia_fraction,
+    }
 
 
 def _sample_cgm_beta_profile(
@@ -1627,6 +1726,7 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
 
     args.n_galaxies = len(galaxies)
     args.galaxy_names = [galaxy.get("name", f"galaxy_{i}") for i, galaxy in enumerate(galaxies)]
+    args.stellar_populations = [galaxy.get("stellar_population") for galaxy in galaxies]
     galaxy_mappings = {
         "dm_mass_msun": ("masses", "dm_msun"),
         "star_mass_msun": ("masses", "stars_msun"),
@@ -1794,6 +1894,7 @@ def _default_generator_args() -> argparse.Namespace:
         cgm_beta=[0.5],
         cgm_temperature_floor_K=[1.0e5],
         cgm_temperature_ceiling_K=[3.0e6],
+        stellar_populations=[None],
         n_arms=[2],
         pitch_deg=[15.0],
         arm_strength=[0.3],
@@ -1886,6 +1987,35 @@ def main():
         },
     }
 
+    stellar_population_fields = (
+        "formation_time",
+        "metallicity",
+        "element_abundance",
+        "iron_mass_fraction_from_snia",
+    )
+    populated_components = [
+        g[component]
+        for g in all_galaxies_pos_mass
+        for component in ("stars", "bulge")
+        if len(g[component]["pos"]) > 0
+    ]
+    if populated_components and any(
+        key in component
+        for component in populated_components
+        for key in stellar_population_fields
+    ):
+        for component in populated_components:
+            missing = [key for key in stellar_population_fields if key not in component]
+            if missing:
+                raise ValueError(
+                    "Stellar populations must be enabled for every galaxy with stars"
+                )
+        for component_name in ("stars", "bulge"):
+            for key in stellar_population_fields:
+                initial_combined_data[component_name][key] = np.concatenate(
+                    [g[component_name][key] for g in all_galaxies_pos_mass]
+                )
+
     # Add uniform background particles if specified
     if args.bg_gas_density_msun_kpc3 > 0 or args.bg_dm_density_msun_kpc3 > 0:
         component_particle_masses = []
@@ -1916,6 +2046,11 @@ def main():
         initial_combined_data["stars"]["mass"] = np.concatenate(
             [initial_combined_data["stars"]["mass"], initial_combined_data["bulge"]["mass"]]
         )
+        for key in stellar_population_fields:
+            if key in initial_combined_data["stars"]:
+                initial_combined_data["stars"][key] = np.concatenate(
+                    [initial_combined_data["stars"][key], initial_combined_data["bulge"][key]]
+                )
     del initial_combined_data["bulge"]
 
     # --- Shift all particles to box center AFTER velocity assignment ---

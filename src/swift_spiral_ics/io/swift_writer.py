@@ -157,6 +157,21 @@ def write_swift_ic(
                 "SmoothingLength", data=(h_star * length_conv).astype(np.float32)
             )
 
+            optional_star_fields = {
+                "formation_time": ("StellarFormationTime", np.float32),
+                "metallicity": ("Metallicity", np.float32),
+                "element_abundance": ("ElementAbundance", np.float32),
+                "iron_mass_fraction_from_snia": ("IronMassFracFromSNIa", np.float32),
+            }
+            for key, (dataset_name, dtype) in optional_star_fields.items():
+                if key in star_data:
+                    values = np.asarray(star_data[key])
+                    if len(values) != N_stars:
+                        raise ValueError(
+                            f"Star field {key} has {len(values)} entries; expected {N_stars}"
+                        )
+                    star_group.create_dataset(dataset_name, data=values.astype(dtype))
+
         # Write black hole particles (PartType5)
         if N_black_holes > 0:
             black_hole_data = particle_data["black_holes"]

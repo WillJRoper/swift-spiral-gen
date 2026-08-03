@@ -129,6 +129,24 @@ If omitted or set to `0`, no explicit black hole is written for that galaxy. Whe
 
 The CGM sampler uses a spherical beta-profile-like density law and assigns the galaxy bulk velocity. Internal energies are computed from hydrostatic balance in a sphericalized halo+bulge+disc+black-hole potential, then clipped to the configured temperature floor/ceiling to avoid unphysical extremes from the idealized model.
 
+### Seeded Stellar Populations
+
+Stellar population properties are opt-in under `galaxies[].stellar_population`.
+The `disc` and `bulge` sections define bounded Gaussian ages and a metallicity
+model using `age_*_gyr`, `metallicity_feh_centre`, optional radial and age
+gradients, and optional scatter. The generator writes the EAGLE inputs
+`StellarFormationTime`, `Metallicity`, `ElementAbundance`, and
+`IronMassFracFromSNIa`. Formation times are negative because these isolated
+runs begin at time zero; the exact value `-1` is reserved by SWIFT for inactive
+background stars and is never generated.
+
+The supplied model uses solar-scaled tracked abundances and is intended to
+produce plausible ages, colours, and radial trends rather than a precision
+chemical-evolution reconstruction. Pre-existing stars become active for future
+SNIa/AGB evolution. SWIFT currently initializes their birth and gravitational
+masses from the same IC `Masses` field, so historical stellar mass loss is not
+reconstructed.
+
 ### Stability Validation
 
 The Local Group examples have two distinct purposes:
@@ -350,7 +368,18 @@ Reusable generator configs live in `examples/`:
 
 - `mw_m31_merger*.yml`: controlled merger with stable test orbits for the LMC/SMC.
 - `mw_m31_local_group_observed*.yml`: observed-like LMC/SMC first-infall phase space.
+- `mw_m31_local_group_observed_seeded*.yml`: the observed setup with component-dependent stellar ages and metallicities for photometry.
+- `mw_m31_local_group_observed_gas_only*.yml`: gas-rich formation experiments with the nominal stellar mass transferred to gas.
 - `validate_*_isolated.yml`: 2 Gyr isolated acceptance models.
+
+The gas-only examples preserve total disc baryonic mass, but redistribute it
+into the configured gas-disc profile. They do not guarantee that the requested
+stellar mass, metallicity distribution, or present-day morphology will emerge.
+Treat the interval before first passage as a formation/relaxation phase and
+calibrate it at low resolution. For a controlled delay with fixed encounter
+initial conditions, evolve each galaxy in isolation and rebuild the merger IC
+from relaxed snapshots; merely increasing the merger duration also advances
+the galaxy and satellite orbits.
 
 ### Production Matrix
 
