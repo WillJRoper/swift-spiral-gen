@@ -919,7 +919,20 @@ def _sample_stellar_population(
     if age_sigma < 0.0 or not 0.0 < age_min <= age_max:
         raise ValueError("stellar_population ages require sigma >= 0 and 0 < min <= max")
 
-    ages = np.clip(rng.normal(age_mean, age_sigma, n_particles), age_min, age_max)
+    if age_sigma == 0.0:
+        if not age_min <= age_mean <= age_max:
+            raise ValueError("stellar_population mean age must lie within its bounds")
+        ages = np.full(n_particles, age_mean)
+    else:
+        ages = rng.normal(age_mean, age_sigma, n_particles)
+        outside = (ages < age_min) | (ages > age_max)
+        attempts = 0
+        while np.any(outside):
+            ages[outside] = rng.normal(age_mean, age_sigma, np.count_nonzero(outside))
+            outside = (ages < age_min) | (ages > age_max)
+            attempts += 1
+            if attempts == 1000:
+                raise ValueError("stellar_population age bounds reject too many samples")
     if np.any(ages > start_time_gyr):
         raise ValueError(
             "stellar_population ages cannot exceed simulation.start_time_gyr"

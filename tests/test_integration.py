@@ -96,6 +96,8 @@ class TestFullPipeline:
             assert np.array_equal(first[key], second[key])
         assert np.all(first["formation_time"] > 0.0)
         assert not np.any(first["formation_time"] == -1.0)
+        ages = 13.8 - first["formation_time"] * (3.085678e19 / 3.15576e16)
+        assert np.all((ages > population["age_min_gyr"]) & (ages < population["age_max_gyr"]))
         assert np.all((first["metallicity"] >= 1.0e-4) & (first["metallicity"] <= 0.04))
         assert first["element_abundance"].shape == (64, 9)
         assert np.all(np.sum(first["element_abundance"][:, 2:], axis=1) <= first["metallicity"])
