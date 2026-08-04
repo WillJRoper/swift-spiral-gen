@@ -1466,29 +1466,16 @@ def add_uniform_background(
     """
     volume = box_size**3
 
-    # Initialize updated dictionary with existing galaxy data, and ensure 'vel' key exists
-    updated = {
-        "dm": {"pos": initial_data["dm"]["pos"], "mass": initial_data["dm"]["mass"], "vel": initial_data["dm"]["vel"]},
-        "gas": {
-            "pos": initial_data["gas"]["pos"],
-            "mass": initial_data["gas"]["mass"],
-            "vel": initial_data["gas"]["vel"],
-            "internal_energy": initial_data["gas"].get(
-                "internal_energy",
-                np.full(len(initial_data["gas"]["pos"]), compute_internal_energy(T=1e4)),
-            ),
-        },
-        "stars": {"pos": initial_data["stars"]["pos"], "mass": initial_data["stars"]["mass"], "vel": initial_data["stars"]["vel"]},
-        "bulge": {"pos": initial_data["bulge"]["pos"], "mass": initial_data["bulge"]["mass"], "vel": initial_data["bulge"]["vel"]},
-        "black_holes": {
-            "pos": initial_data["black_holes"]["pos"],
-            "mass": initial_data["black_holes"]["mass"],
-            "vel": initial_data["black_holes"]["vel"],
-            "subgrid_mass": initial_data["black_holes"].get(
-                "subgrid_mass", initial_data["black_holes"]["mass"]
-            ),
-        },
-    }
+    # Preserve component metadata such as stellar ages and abundances. Arrays
+    # are replaced, not mutated, when background particles are appended below.
+    updated = {name: dict(component) for name, component in initial_data.items()}
+    updated["gas"].setdefault(
+        "internal_energy",
+        np.full(len(initial_data["gas"]["pos"]), compute_internal_energy(T=1e4)),
+    )
+    updated["black_holes"].setdefault(
+        "subgrid_mass", initial_data["black_holes"]["mass"]
+    )
 
     use_grid = grid_spacing > 0
     half_box = box_size / 2.0

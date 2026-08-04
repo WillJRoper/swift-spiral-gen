@@ -109,6 +109,8 @@ class TestFullPipeline:
             params_file = Path(tmpdir) / "seeded.yml"
             config = _tiny_galaxy_config(ic_file, params_file)
             config["simulation"]["start_time_gyr"] = 13.8
+            # Exercise the production path that appends a uniform background.
+            config["background"] = {"gas_density_msun_kpc3": 1.0}
             config["galaxies"][0]["stellar_population"] = {
                 "enabled": True,
                 "disc": {
