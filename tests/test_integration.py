@@ -23,6 +23,7 @@ from swift_spiral_ics.cli.generate import (
     _sample_stellar_population,
     _satellite_tidal_radius_kpc,
     _validate_host_relative_satellite_orbits,
+    _validate_written_stellar_population,
 )
 from swift_spiral_ics.physics.sampling import (
     sample_exponential_disc,
@@ -130,6 +131,16 @@ class TestFullPipeline:
                 assert not np.any(stars["StellarFormationTime"][:] == -1.0)
                 assert np.all(stars["Metallicity"][:] > 0.0)
                 assert stars["ElementAbundance"].shape[1] == 9
+
+    def test_seeded_population_validation_rejects_missing_ic_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ic_file = Path(tmpdir) / "incomplete.hdf5"
+            with h5py.File(ic_file, "w") as f:
+                stars = f.create_group("PartType4")
+                stars.create_dataset("ParticleIDs", data=np.arange(4))
+
+            with pytest.raises(ValueError, match="StellarFormationTime was not written"):
+                _validate_written_stellar_population(str(ic_file), 4)
 
     def test_zero_star_model_survives_full_generation_pipeline(self):
         with tempfile.TemporaryDirectory() as tmpdir:

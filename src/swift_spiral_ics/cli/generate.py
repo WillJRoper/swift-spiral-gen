@@ -7,6 +7,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import h5py
 import numpy as np
 import yaml
 
@@ -960,6 +961,36 @@ def _sample_stellar_population(
         "element_abundance": element_abundance,
         "iron_mass_fraction_from_snia": element_abundance[:, 8] * snia_fraction,
     }
+
+
+def _validate_written_stellar_population(filename: str, expected_count: int) -> None:
+    """Reject seeded ICs if their SWIFT population fields were not persisted."""
+    expected_fields = {
+        "StellarFormationTime": (expected_count,),
+        "Metallicity": (expected_count,),
+        "ElementAbundance": (expected_count, 9),
+        "IronMassFracFromSNIa": (expected_count,),
+    }
+    with h5py.File(filename, "r") as handle:
+        if "PartType4" not in handle:
+            raise ValueError("Seeded stellar population requested but PartType4 is missing")
+        stars = handle["PartType4"]
+        for field, expected_shape in expected_fields.items():
+            if field not in stars:
+                raise ValueError(f"Seeded stellar population field {field} was not written")
+            values = stars[field][:]
+            if values.shape != expected_shape:
+                raise ValueError(
+                    f"Seeded stellar population field {field} has shape {values.shape}; "
+                    f"expected {expected_shape}"
+                )
+            if not np.all(np.isfinite(values)):
+                raise ValueError(f"Seeded stellar population field {field} is not finite")
+
+        if np.any(stars["StellarFormationTime"][:] == -1.0):
+            raise ValueError("Seeded stellar population contains SWIFT's inactive -1 sentinel")
+        if np.any(stars["Metallicity"][:] <= 0.0):
+            raise ValueError("Seeded stellar population contains non-positive metallicities")
 
 
 def _sample_cgm_beta_profile(
@@ -2080,6 +2111,13 @@ def main():
         initial_combined_data,
         time_begin=args.start_time_gyr / _GYR_PER_INTERNAL_TIME,
     )
+    if any(
+        population and population.get("enabled", False)
+        for population in args.stellar_populations
+    ):
+        _validate_written_stellar_population(
+            args.out_ics, len(initial_combined_data["stars"]["pos"])
+        )
     print(f"ICs written to {args.out_ics}.")
 
     # Determine minimum gas particle mass for splitting threshold
