@@ -318,9 +318,13 @@ class TestYamlWriter:
             time_end_gyr=12.0,
         )
         gyr_per_internal_time = 3.085678e19 / 3.15576e16
+        start_time = 13.8 / gyr_per_internal_time
 
-        assert f"time_begin: {13.8 / gyr_per_internal_time}" in params
+        assert f"time_begin: {start_time}" in params
         assert f"time_end:   {25.8 / gyr_per_internal_time}" in params
+        assert f"time_first:          {start_time}" in params
+        assert f"time_first:           {start_time}" in params
+        assert f"time_first:                      {start_time}" in params
 
     def test_generate_swift_params_custom_h_max_fraction(self):
         """Custom h_max cell fraction is reflected in the YAML."""

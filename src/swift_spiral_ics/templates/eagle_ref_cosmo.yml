@@ -29,6 +29,7 @@ TimeIntegration:
 # Parameters governing the snapshots
 Snapshots:
   basename:            __SNAP_BASENAME__ # Common part of the name of output files
+  time_first:          __TIME_BEGIN__
   delta_time:          __SNAP_DT__
   output_list_on:      0
   output_list:         ./output_list.txt
@@ -39,7 +40,7 @@ Snapshots:
 # Parameters governing the conserved quantities statistics
 Statistics:
   delta_time:           __STAT_DT__
-  scale_factor_first:   0.01
+  time_first:           __TIME_BEGIN__
 
 # Parameters for the self-gravity scheme
 Gravity:
@@ -77,7 +78,7 @@ FOF:
   linking_length_ratio:            0.2         # Linking length in units of the main inter-particle separation.
   seed_black_holes_enabled:        0           # Explicit PartType5 SMBHs are supplied in the ICs
   black_hole_seed_halo_mass_Msun:  1.0e10      # Minimal halo mass in which to seed a black hole (in solar masses).
-  scale_factor_first:              0.05        # Scale-factor of first FoF black hole seeding calls.
+  time_first:                      __TIME_BEGIN__ # First FoF call in non-cosmological time.
   delta_time:                      1.00751     # Scale-factor ratio between consecutive FoF black hole seeding calls.
   linking_types:   [0, 1, 0, 0, 0, 0, 0]       # Use DM as the primary FOF linking type
   attaching_types: [1, 0, 0, 0, 1, 1, 0]       # Use gas, stars and black holes as FOF attachable types
@@ -107,7 +108,7 @@ LineOfSight:
   num_along_x:         0
   num_along_y:         0
   num_along_z:         100
-  scale_factor_first:  0.1
+  time_first:          __TIME_BEGIN__
   delta_time:          1.1
 
 # Impose primoridal metallicity
