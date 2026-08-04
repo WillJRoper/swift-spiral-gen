@@ -309,6 +309,19 @@ class TestYamlWriter:
         assert "run_name:   custom-run" in params
         assert "delta_time:          5.113560131679326e-06" in params
 
+    def test_generate_swift_params_supports_nonzero_start_time(self):
+        """The end time remains an elapsed duration when the clock is offset."""
+        params = generate_swift_params(
+            ic_filename="test.hdf5",
+            box_size=100.0,
+            start_time_gyr=13.8,
+            time_end_gyr=12.0,
+        )
+        gyr_per_internal_time = 3.085678e19 / 3.15576e16
+
+        assert f"time_begin: {13.8 / gyr_per_internal_time}" in params
+        assert f"time_end:   {25.8 / gyr_per_internal_time}" in params
+
     def test_generate_swift_params_custom_h_max_fraction(self):
         """Custom h_max cell fraction is reflected in the YAML."""
         params = generate_swift_params(

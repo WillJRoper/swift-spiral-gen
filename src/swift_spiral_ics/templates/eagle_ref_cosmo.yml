@@ -23,7 +23,7 @@ Cosmology:
 TimeIntegration:
   dt_min: __DT_MIN_GYR__
   dt_max:     __DT_MAX_GYR__  # The maximal time-step size of the simulation (in internal units).
-  time_begin: 0.0
+  time_begin: __TIME_BEGIN__
   time_end:   __TIME_END__
   
 # Parameters governing the snapshots

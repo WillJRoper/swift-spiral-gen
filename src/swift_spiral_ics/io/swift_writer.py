@@ -12,6 +12,7 @@ def write_swift_ic(
     box_size: float,
     particle_data: dict[str, dict[str, np.ndarray]],
     m_part: float | None = None,
+    time_begin: float = 0.0,
 ) -> None:
     # Convert to cosmological SWIFT units (Mpc, 1e10 Msun)
     length_conv = 1.0 / 1000.0  # kpc -> Mpc
@@ -41,7 +42,7 @@ def write_swift_ic(
         header.attrs["MassTable"] = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
         header.attrs["Flag_Entropy_ICs"] = 0
         header.attrs["NumFilesPerSnapshot"] = 1
-        header.attrs["Time"] = 0.0
+        header.attrs["Time"] = time_begin
         # Explicitly mark as non-cosmological
         header.attrs["HubbleParam"] = 0.0
         header.attrs["Omega0"] = 0.0

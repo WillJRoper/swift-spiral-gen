@@ -40,6 +40,7 @@ def _load_template_text(template_name: str) -> str:
 def generate_swift_params(
     ic_filename: str,
     box_size: float,
+    start_time_gyr: float = 0.0,
     time_end_gyr: float = 1.0,
     snapshot_dt_myr: float = 10.0,
     dt_min_gyr: float = 1e-5,
@@ -59,7 +60,10 @@ def generate_swift_params(
     """Generate a parameter file by substituting tokens in the template text."""
     template_text = _load_template_text(param_template)
     ic_filename = str(ic_filename)
-    time_end_internal = time_end_gyr / _GYR_PER_INTERNAL_TIME
+    if start_time_gyr < 0.0:
+        raise ValueError("start_time_gyr must be non-negative")
+    time_begin_internal = start_time_gyr / _GYR_PER_INTERNAL_TIME
+    time_end_internal = (start_time_gyr + time_end_gyr) / _GYR_PER_INTERNAL_TIME
     snapshot_dt_internal = (snapshot_dt_myr / 1000.0) / _GYR_PER_INTERNAL_TIME
     dt_min_internal = dt_min_gyr / _GYR_PER_INTERNAL_TIME
     # Softening now in Mpc
@@ -169,6 +173,7 @@ def generate_swift_params(
         "__STAT_DT__": f"{snapshot_dt_internal}",
         "__DT_MIN_GYR__": f"{dt_min_internal}",
         "__DT_MAX_GYR__": f"{dt_max_internal}",
+        "__TIME_BEGIN__": f"{time_begin_internal}",
         "__TIME_END__": f"{time_end_internal}",
         "__DM_SOFTENING__": f"{dm_softening_mpc}",
         "__BARYON_SOFTENING__": f"{baryon_softening_mpc}",

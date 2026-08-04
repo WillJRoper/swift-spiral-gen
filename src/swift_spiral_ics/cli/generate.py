@@ -842,10 +842,14 @@ def generate_galaxy_particles(
         disc_population = stellar_population.get("disc", {})
         bulge_population = stellar_population.get("bulge", disc_population)
         galaxy_data["stars"].update(
-            _sample_stellar_population(pos_star, disc_population, rng)
+            _sample_stellar_population(
+                pos_star, disc_population, rng, args.start_time_gyr
+            )
         )
         galaxy_data["bulge"].update(
-            _sample_stellar_population(pos_bulge, bulge_population, rng)
+            _sample_stellar_population(
+                pos_bulge, bulge_population, rng, args.start_time_gyr
+            )
         )
 
     _validate_generated_galaxy_stability(galaxy_id, galaxy_data, grid_solver)
@@ -884,6 +888,7 @@ def _sample_stellar_population(
     positions: np.ndarray,
     population: dict,
     rng: np.random.Generator,
+    start_time_gyr: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """Sample ages and EAGLE chemistry for one stellar component."""
     n_particles = len(positions)
@@ -914,7 +919,11 @@ def _sample_stellar_population(
         raise ValueError("stellar_population ages require sigma >= 0 and 0 < min <= max")
 
     ages = np.clip(rng.normal(age_mean, age_sigma, n_particles), age_min, age_max)
-    formation_time = -ages / _GYR_PER_INTERNAL_TIME
+    if np.any(ages > start_time_gyr):
+        raise ValueError(
+            "stellar_population ages cannot exceed simulation.start_time_gyr"
+        )
+    formation_time = (start_time_gyr - ages) / _GYR_PER_INTERNAL_TIME
     if np.any(formation_time == -1.0):
         raise ValueError("stellar_population produced SWIFT's inactive -1 birth-time sentinel")
 
@@ -1674,6 +1683,7 @@ def _apply_config_file(args: argparse.Namespace, config_path: str) -> argparse.N
     simulation = config.get("simulation", {})
     _set_if_present(args, "box_kpc", simulation, "box_kpc")
     _set_if_present(args, "seed", simulation, "seed")
+    _set_if_present(args, "start_time_gyr", simulation, "start_time_gyr")
     _set_if_present(args, "max_timestep_gyr", simulation, "max_timestep_gyr")
     _set_if_present(args, "dt_min_gyr", simulation, "dt_min_gyr")
     _set_if_present(args, "time_end_gyr", simulation, "time_end_gyr")
@@ -1922,6 +1932,7 @@ def _default_generator_args() -> argparse.Namespace:
         bg_grid_kpc=0.0,
         bg_radius_kpc=None,
         seed=42,
+        start_time_gyr=0.0,
         run_name=None,
         param_template="eagle_ref_cosmo",
         snapshot_basename="snapshot",
@@ -2067,6 +2078,7 @@ def main():
         args.out_ics,
         args.box_kpc,
         initial_combined_data,
+        time_begin=args.start_time_gyr / _GYR_PER_INTERNAL_TIME,
     )
     print(f"ICs written to {args.out_ics}.")
 
@@ -2079,6 +2091,7 @@ def main():
     params = generate_swift_params(
         ic_filename=args.out_ics,
         box_size=args.box_kpc,
+        start_time_gyr=args.start_time_gyr,
         time_end_gyr=args.time_end_gyr,
         snapshot_dt_myr=args.snapshot_dt_myr,
         dt_min_gyr=args.dt_min_gyr,

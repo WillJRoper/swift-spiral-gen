@@ -136,9 +136,11 @@ The `disc` and `bulge` sections define bounded Gaussian ages and a metallicity
 model using `age_*_gyr`, `metallicity_feh_centre`, optional radial and age
 gradients, and optional scatter. The generator writes the EAGLE inputs
 `StellarFormationTime`, `Metallicity`, `ElementAbundance`, and
-`IronMassFracFromSNIa`. Formation times are negative because these isolated
-runs begin at time zero; the exact value `-1` is reserved by SWIFT for inactive
-background stars and is never generated.
+`IronMassFracFromSNIa`. The seeded observed examples start their physical clock
+at 13.8 Gyr, so formation times are `13.8 Gyr - stellar age` and remain
+positive. The exact value `-1` is reserved by SWIFT for inactive background
+stars and is never generated. `simulation.time_end_gyr` remains an elapsed
+duration: a 12 Gyr run beginning at 13.8 Gyr ends at model time 25.8 Gyr.
 
 The supplied model uses solar-scaled tracked abundances and is intended to
 produce plausible ages, colours, and radial trends rather than a precision

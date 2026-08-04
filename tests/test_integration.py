@@ -88,12 +88,12 @@ class TestFullPipeline:
         }
         positions = np.column_stack([np.linspace(0, 10, 64), np.zeros((64, 2))])
 
-        first = _sample_stellar_population(positions, population, get_rng(7))
-        second = _sample_stellar_population(positions, population, get_rng(7))
+        first = _sample_stellar_population(positions, population, get_rng(7), 13.8)
+        second = _sample_stellar_population(positions, population, get_rng(7), 13.8)
 
         for key in first:
             assert np.array_equal(first[key], second[key])
-        assert np.all(first["formation_time"] < 0.0)
+        assert np.all(first["formation_time"] > 0.0)
         assert not np.any(first["formation_time"] == -1.0)
         assert np.all((first["metallicity"] >= 1.0e-4) & (first["metallicity"] <= 0.04))
         assert first["element_abundance"].shape == (64, 9)
@@ -107,6 +107,7 @@ class TestFullPipeline:
             ic_file = Path(tmpdir) / "seeded.hdf5"
             params_file = Path(tmpdir) / "seeded.yml"
             config = _tiny_galaxy_config(ic_file, params_file)
+            config["simulation"]["start_time_gyr"] = 13.8
             config["galaxies"][0]["stellar_population"] = {
                 "enabled": True,
                 "disc": {
@@ -125,7 +126,7 @@ class TestFullPipeline:
             assert result.returncode == 0, result.stderr
             with h5py.File(ic_file, "r") as f:
                 stars = f["PartType4"]
-                assert np.all(stars["StellarFormationTime"][:] < 0.0)
+                assert np.all(stars["StellarFormationTime"][:] > 0.0)
                 assert not np.any(stars["StellarFormationTime"][:] == -1.0)
                 assert np.all(stars["Metallicity"][:] > 0.0)
                 assert stars["ElementAbundance"].shape[1] == 9
@@ -599,6 +600,7 @@ class TestFullPipeline:
         )
         _normalise_per_galaxy_args(seeded)
         assert all(population["enabled"] for population in seeded.stellar_populations)
+        assert seeded.start_time_gyr == 13.8
         assert seeded.m_star_msun == [5.1e10, 7.107e10, 2.7e9, 4.5e8]
 
         gas_only = _apply_config_file(

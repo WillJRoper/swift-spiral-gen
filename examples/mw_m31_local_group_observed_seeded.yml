@@ -1,6 +1,6 @@
 # Observed Local Group setup with opt-in present-day stellar populations.
-# Ages are measured at the start of this non-cosmological run. Negative
-# StellarFormationTime values are therefore expected and are not SWIFT's exact
+# Ages are measured at the start of this non-cosmological run. The 13.8 Gyr
+# clock offset keeps StellarFormationTime positive and away from SWIFT's exact
 # -1 inactive-star sentinel.
 extends: mw_m31_local_group_observed.yml
 
@@ -8,6 +8,12 @@ output:
   ics: mw_m31_local_group_observed_seeded.hdf5
   params: mw_m31_local_group_observed_seeded_params.yml
   run_name: mw_m31_local_group_observed_seeded
+
+simulation:
+  # Present-day cosmic clock for this observed Local Group phase-space model.
+  # The inherited time_end_gyr remains an elapsed duration, so this 12 Gyr run
+  # ends at model time 25.8 Gyr.
+  start_time_gyr: 13.8
 
 galaxies:
   - name: Milky Way
